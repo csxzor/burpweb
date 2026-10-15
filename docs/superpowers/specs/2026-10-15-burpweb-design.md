@@ -82,6 +82,12 @@ Requests are matched in tiers, and the first tier that matches wins:
 3. **HEAD.** A HEAD request with no match in tier 1 or 2 is matched against GET
    using tiers 1 and 2. The response body is sent empty, and the headers are
    kept.
+   **304 and 206 are a last resort** (amended after review). A captured 304 Not
+   Modified or 206 Partial Content answers a conditional or Range request, and
+   the snapshot browser asks unconditionally. So the actual lookup order is:
+   the most recent full (non-304/206) EXACT record; then the most recent full
+   FALLBACK record with status < 400; then any EXACT record; then any FALLBACK
+   record.
 4. **MISS.** The tool returns a 404 with `Content-Type: text/html` and a short
    page saying "not in snapshot" that names the method and URL.
 

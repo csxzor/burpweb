@@ -81,6 +81,26 @@ def test_captured_head_wins_over_get():
     assert Matcher([get, head]).match(incoming("HEAD", "/h")) == (head, Tier.EXACT)
 
 
+def test_full_response_preferred_over_later_304_or_206():
+    full = make_record(1, path="/app.js", status=200)
+    not_modified = make_record(2, path="/app.js", status=304)
+    partial = make_record(3, path="/app.js", status=206)
+    assert Matcher([full, not_modified, partial]).match(incoming(path="/app.js")) == (full, Tier.EXACT)
+
+
+def test_fallback_full_response_beats_exact_304():
+    full = make_record(1, path="/app.js", query="v=1", status=200)
+    not_modified = make_record(2, path="/app.js", query="v=2", status=304)
+    assert Matcher([full, not_modified]).match(incoming(path="/app.js", query="v=2")) == (full, Tier.FALLBACK)
+
+
+def test_304_used_when_nothing_else_captured():
+    not_modified = make_record(1, path="/app.js", status=304)
+    m = Matcher([not_modified])
+    assert m.match(incoming(path="/app.js")) == (not_modified, Tier.EXACT)
+    assert m.match(incoming(path="/app.js", query="x=1")) == (not_modified, Tier.FALLBACK)
+
+
 def test_misses():
     m = Matcher([make_record(1, path="/a")])
     assert m.match(incoming(path="/b")) == (None, Tier.MISS)

@@ -48,10 +48,15 @@ def normalize_body(body: bytes, content_type: str) -> tuple:
     return ("raw", body)
 
 
+# Answers to conditional or Range requests: useless to a browser that asks unconditionally.
+PARTIAL_STATUSES = {206, 304}
+
+
 class Matcher:
     def __init__(self, records: Iterable[Record]):
-        self._exact: dict[tuple, Record] = {}
-        self._success: dict[tuple, Record] = {}
+        self._exact_full: dict[tuple, Record] = {}
+        self._exact_any: dict[tuple, Record] = {}
+        self._success_full: dict[tuple, Record] = {}
         self._any: dict[tuple, Record] = {}
         for rec in records:
             base = (rec.scheme, rec.host.lower(), rec.port, rec.method.upper(), rec.path)
@@ -59,10 +64,13 @@ class Matcher:
                 normalize_query(rec.query),
                 normalize_body(rec.request_body, rec.request_content_type),
             )
-            _keep_latest(self._exact, exact, rec)
+            full = rec.status not in PARTIAL_STATUSES
+            _keep_latest(self._exact_any, exact, rec)
             _keep_latest(self._any, base, rec)
-            if rec.status < 400:
-                _keep_latest(self._success, base, rec)
+            if full:
+                _keep_latest(self._exact_full, exact, rec)
+                if rec.status < 400:
+                    _keep_latest(self._success_full, base, rec)
 
     def match(self, req: Incoming) -> tuple[Record | None, Tier]:
         found = self._lookup(req)
@@ -77,11 +85,15 @@ class Matcher:
     def _lookup(self, req: Incoming) -> tuple[Record, Tier] | None:
         base = (req.scheme.lower(), req.host.lower(), req.port, req.method.upper(), req.path)
         exact = base + (normalize_query(req.query), normalize_body(req.body, req.content_type))
-        if exact in self._exact:
-            return self._exact[exact], Tier.EXACT
-        rec = self._success.get(base) or self._any.get(base)
-        if rec is not None:
-            return rec, Tier.FALLBACK
+        # Full responses first; a captured 304/206 is only a last resort.
+        if exact in self._exact_full:
+            return self._exact_full[exact], Tier.EXACT
+        if base in self._success_full:
+            return self._success_full[base], Tier.FALLBACK
+        if exact in self._exact_any:
+            return self._exact_any[exact], Tier.EXACT
+        if base in self._any:
+            return self._any[base], Tier.FALLBACK
         return None
 
 
