@@ -25,6 +25,10 @@ uv run burpweb list history.xml               # what's in the capture
 uv run burpweb serve history.xml --browser    # proxy on 127.0.0.1:8081 + preconfigured Firefox
 ```
 
+Several exports (say, your main history plus a later frontend capture) can be combined:
+`uv run burpweb serve history.xml frontend.xml`. They're treated as one history in the order given,
+so for an identical request the later file wins.
+
 `--browser` uses its own Firefox profile (`~/.local/share/burpweb/firefox-profile`) and trusts the mitmproxy CA
 only there. Your normal browser and system trust store are not touched.
 Without `--browser`, point any browser's HTTP and HTTPS proxy at `127.0.0.1:8081` and trust

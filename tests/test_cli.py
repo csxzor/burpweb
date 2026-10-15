@@ -32,6 +32,21 @@ def test_list_shows_origins_sorted_by_count(write_xml, capsys):
     ]
 
 
+def test_list_accepts_multiple_exports(write_xml, capsys):
+    history = write_xml([make_item(request=req("/a"), response=OK)], "history.xml")
+    frontend = write_xml([make_item(request=req("/app.js"), response=OK), make_item(request=req("/a"), response=OK)], "frontend.xml")
+    assert main(["list", str(history), str(frontend)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "Loaded 3 items across 1 origin(s) from 2 files; skipped 0 without a replayable response, 0 malformed."
+    assert out[2] == "     3      2  https://example.com"
+
+
+def test_bad_file_among_several_exits_2(write_xml, tmp_path, capsys):
+    good = write_xml([make_item(request=req("/a"), response=OK)])
+    assert main(["list", str(good), str(tmp_path / "nope.xml")]) == 2
+    assert "nope.xml" in capsys.readouterr().err
+
+
 def test_malformed_items_listed_in_summary(write_xml, capsys):
     path = write_xml([make_item(request=req("/a"), response=b"junk"), make_item(request=req("/a"), response=OK)])
     assert main(["list", str(path)]) == 0

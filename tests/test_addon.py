@@ -1,3 +1,4 @@
+import dataclasses
 import gzip
 import io
 
@@ -47,6 +48,13 @@ def test_fallback_logs_burp_index():
     addon, out = replay(make_record(7, path="/s", query="q=1"))
     addon.request(flow("GET", "https://example.com/s?q=2"))
     assert out.getvalue() == "FALLBACK GET https://example.com/s?q=2  -> 200  [burp #7]\n"
+
+
+def test_fallback_log_names_source_file():
+    rec = dataclasses.replace(make_record(4, path="/s"), source="trjs")
+    addon, out = replay(rec)
+    addon.request(flow("GET", "https://example.com/s?q=2"))
+    assert out.getvalue() == "FALLBACK GET https://example.com/s?q=2  -> 200  [trjs #4]\n"
 
 
 def test_head_gets_empty_body():

@@ -17,6 +17,13 @@ def test_exact_prefers_most_recent_even_if_error():
     assert Matcher([old, new]).match(incoming(path="/a")) == (new, Tier.EXACT)
 
 
+def test_later_record_wins_even_with_lower_item_number():
+    # Item numbers restart in each export; recency is the order of the combined history.
+    from_first_file = make_record(5, path="/a", response_body=b"older")
+    from_second_file = make_record(1, path="/a", response_body=b"newer")
+    assert Matcher([from_first_file, from_second_file]).match(incoming(path="/a")) == (from_second_file, Tier.EXACT)
+
+
 def test_query_order_insensitive():
     rec = make_record(1, path="/s", query="a=1&b=2&b=3")
     assert Matcher([rec]).match(incoming(path="/s", query="b=2&a=1&b=3"))[1] is Tier.EXACT

@@ -68,8 +68,8 @@ class Replay:
             timestamp_start=now,
             timestamp_end=now,
         )
-        index = record.index if tier in (Tier.FALLBACK, Tier.HEAD) else None
-        self._log(tier, req.method, url, record.status, index)
+        origin = f"{record.source or 'burp'} #{record.index}" if tier in (Tier.FALLBACK, Tier.HEAD) else None
+        self._log(tier, req.method, url, record.status, origin)
 
     def server_connect(self, data) -> None:
         # Last line of defence: traffic that never reaches the request hook (raw TCP tunnels,
@@ -88,6 +88,6 @@ class Replay:
         lines += [f"{count:>5}  {key}" for key, count in self.misses.most_common()]
         return "\n".join(lines)
 
-    def _log(self, tier: Tier, method: str, url: str, status: int, burp_index: int | None = None) -> None:
-        extra = f"  [burp #{burp_index}]" if burp_index is not None else ""
+    def _log(self, tier: Tier, method: str, url: str, status: int, item: str | None = None) -> None:
+        extra = f"  [{item}]" if item is not None else ""
         print(f"{tier.value:<8} {method} {url}  -> {status}{extra}", file=self.out, flush=True)

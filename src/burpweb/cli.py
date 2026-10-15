@@ -10,8 +10,11 @@ import sys
 from pathlib import Path
 
 from burpweb.addon import Replay
-from burpweb.burp_xml import BurpXmlError, LoadResult, load
+from burpweb.burp_xml import BurpXmlError, LoadResult, load_many
 from burpweb.matcher import Matcher
+
+
+EXPORTS_HELP = "Burp XML from Proxy > HTTP history > Save items; several files are combined, later ones win"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="run the replay proxy")
-    serve.add_argument("export", type=Path, help="Burp XML from Proxy > HTTP history > Save items")
+    serve.add_argument("exports", type=Path, nargs="+", help=EXPORTS_HELP)
     serve.add_argument("--port", type=int, default=8081, help="proxy port (default: %(default)s)")
     serve.add_argument("--browser", action="store_true", help="open a Firefox profile preconfigured for the proxy")
     serve.add_argument(
@@ -30,35 +33,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     show = sub.add_parser("list", help="show the captured origins")
-    show.add_argument("export", type=Path, help="Burp XML from Proxy > HTTP history > Save items")
+    show.add_argument("exports", type=Path, nargs="+", help=EXPORTS_HELP)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = load(args.export)
+        result = load_many(args.exports)
     except BurpXmlError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     if not result.records:
         print(
-            f"error: no usable items in {args.export}. Export with Proxy > HTTP history > "
+            f"error: no usable items in {', '.join(map(str, args.exports))}. Export with Proxy > HTTP history > "
             "select items > Save items, and make sure the items have responses.",
             file=sys.stderr,
         )
         return 1
-    print(load_summary(result), flush=True)
+    print(load_summary(result, files=len(args.exports)), flush=True)
     if args.command == "list":
         print(format_hosts(result))
         return 0
     return serve(result, port=args.port, confdir=args.confdir.expanduser().resolve(), browser=args.browser)
 
 
-def load_summary(result: LoadResult) -> str:
+def load_summary(result: LoadResult, files: int = 1) -> str:
     origins = {r.origin for r in result.records}
+    from_files = f" from {files} files" if files > 1 else ""
     lines = [
-        f"Loaded {len(result.records)} items across {len(origins)} origin(s); "
+        f"Loaded {len(result.records)} items across {len(origins)} origin(s){from_files}; "
         f"skipped {result.skipped_no_response} without a replayable response, {len(result.malformed)} malformed."
     ]
     lines += [f"  malformed item #{index}: {reason}" for index, reason in result.malformed]

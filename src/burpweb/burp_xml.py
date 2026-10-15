@@ -6,7 +6,7 @@ import base64
 import binascii
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -33,6 +33,7 @@ class Record:
     status: int
     response_headers: tuple[tuple[str, str], ...]
     response_body: bytes
+    source: str = ""  # export file name, set when several exports are combined
 
     @property
     def origin(self) -> str:
@@ -113,6 +114,19 @@ def load(path: str | Path) -> LoadResult:
     except OSError as e:
         raise BurpXmlError(f"{path}: {e.strerror or e}") from None
     return result
+
+
+def load_many(paths: list[str | Path]) -> LoadResult:
+    """Load several exports as one history, in the given order (later files are more recent)."""
+    combined = LoadResult()
+    tag = len(paths) > 1
+    for path in paths:
+        result = load(path)
+        name = Path(path).name
+        combined.records += [replace(r, source=name) for r in result.records] if tag else result.records
+        combined.skipped_no_response += result.skipped_no_response
+        combined.malformed += [(i, f"{reason} (in {name})" if tag else reason) for i, reason in result.malformed]
+    return combined
 
 
 def _parse_item(index: int, item: ET.Element) -> Record | None:

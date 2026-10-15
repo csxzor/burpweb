@@ -3,7 +3,7 @@ import gzip
 import pytest
 
 from burpfixtures import make_item
-from burpweb.burp_xml import BurpXmlError, load
+from burpweb.burp_xml import BurpXmlError, load, load_many
 
 GET_INDEX = b"GET /index.html?b=2&a=1 HTTP/1.1\r\nHost: example.com\r\n\r\n"
 OK_HTML = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\n<h1>hi</h1>"
@@ -125,6 +125,22 @@ def test_interim_response_prefix_uses_final_response(write_xml, interim):
 def test_bare_interim_response_skipped(write_xml):
     result = load(write_xml([make_item(request=GET_INDEX, response=b"HTTP/1.1 100 Continue\r\n\r\n")]))
     assert result.records == [] and result.skipped_no_response == 1
+
+
+def test_load_many_combines_files_in_order(write_xml):
+    first = write_xml([make_item(request=GET_INDEX, response=OK_HTML), make_item(request=GET_INDEX, response=None)], "first.xml")
+    second = write_xml(
+        [make_item(request=GET_INDEX, response=b"junk"), make_item(request=GET_INDEX, response=OK_HTML)], "second.xml"
+    )
+    result = load_many([first, second])
+    assert [(r.source, r.index) for r in result.records] == [("first.xml", 1), ("second.xml", 2)]
+    assert result.skipped_no_response == 1
+    assert result.malformed == [(1, "bad status line 'junk' (in second.xml)")]
+
+
+def test_load_many_single_file_has_no_source(write_xml):
+    result = load_many([write_xml([make_item(request=GET_INDEX, response=OK_HTML)])])
+    assert [r.source for r in result.records] == [""]
 
 
 def test_invalid_xml_suggests_base64(tmp_path):

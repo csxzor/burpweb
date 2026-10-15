@@ -98,5 +98,5 @@ class Matcher:
 
 
 def _keep_latest(index: dict[tuple, Record], key: tuple, rec: Record) -> None:
-    if key not in index or index[key].index < rec.index:
-        index[key] = rec
+    # Records arrive in history order (item numbers restart per export), so the last one wins.
+    index[key] = rec
