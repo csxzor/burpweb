@@ -98,6 +98,13 @@ def test_absolute_form_request_target(write_xml):
     assert (rec.path, rec.query) == ("/a/b", "c=d")
 
 
+def test_folded_header_lines_are_joined(write_xml):
+    req = b"GET / HTTP/1.1\r\nHost: example.com\r\nAuthorization: Bearer abc\r\n def\r\nAccept: */*\r\n\r\n"
+    resp = b"HTTP/1.1 200 OK\r\nX-Long: one\r\n\ttwo\r\nContent-Type: text/plain\r\n\r\nok"
+    (rec,) = load(write_xml([make_item(request=req, response=resp)])).records
+    assert rec.response_headers == (("X-Long", "one two"), ("Content-Type", "text/plain"))
+
+
 def test_websocket_upgrade_skipped(write_xml):
     req = b"GET /ws HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
     resp = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"

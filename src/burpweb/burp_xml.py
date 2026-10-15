@@ -66,6 +66,10 @@ def split_message(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
     for line in lines[1:]:
         if not line.strip():
             continue
+        if line[:1] in (b" ", b"\t") and headers:  # obsolete line folding: continues the previous value
+            name, value = headers[-1]
+            headers[-1] = (name, f"{value} {line.decode('latin-1').strip()}")
+            continue
         name, colon, value = line.decode("latin-1").partition(":")
         if not colon:
             raise ValueError(f"bad header line {line[:60]!r}")
