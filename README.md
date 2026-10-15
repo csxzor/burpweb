@@ -14,7 +14,8 @@ uv run burpweb --help
 ## 1. Export from Burp
 
 Proxy → HTTP history → select all (Ctrl-A) → right-click → **Save items**.
-Keep **"Base64-encode requests and responses"** ticked.
+Keep **"Base64-encode requests and responses"** ticked. Raw exports lose every carriage-return
+character (XML parsing turns CRLF into LF) and break on binary bodies, so replays from them are less exact.
 Using a `.burp` project? Open it in Burp first, then export the same way.
 
 ## 2. Serve it

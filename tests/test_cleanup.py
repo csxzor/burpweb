@@ -4,6 +4,8 @@ import zlib
 import brotli
 import pytest
 
+from burpfixtures import make_item
+from burpweb.burp_xml import load
 from burpweb.cleanup import clean_response, dechunk
 
 CHUNKED = b"4\r\nWiki\r\n5;ext=1\r\npedia\r\n0\r\n\r\n"
@@ -19,6 +21,19 @@ def value(headers, name):
 
 def test_dechunk_valid():
     assert dechunk(CHUNKED) == b"Wikipedia"
+
+
+def test_dechunk_lf_only():
+    # Raw (non-base64) Burp exports lose every CR: XML parsing normalizes CRLF to LF.
+    assert dechunk(b"5\nhello\n6\n world\n0\n\n") == b"hello world"
+
+
+def test_raw_export_chunked_body_is_decoded(write_xml):
+    response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+    request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+    (rec,) = load(write_xml([make_item(request=request, response=response, b64=False)])).records
+    _, body = clean_response(rec.response_headers, rec.response_body)
+    assert body == b"hello world"
 
 
 @pytest.mark.parametrize("bad", [b"zz\r\nabc\r\n0\r\n\r\n", b"10\r\nshort\r\n", b"no crlf at all", b"-1\r\n\r\n"])

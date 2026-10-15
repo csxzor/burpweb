@@ -12,11 +12,14 @@ _DROP = HOP_BY_HOP | {"content-length", "alt-svc"}
 
 
 def dechunk(body: bytes) -> bytes:
-    """Decode a chunked transfer-encoded body; raise ValueError if it isn't validly chunked."""
+    """Decode a chunked transfer-encoded body; raise ValueError if it isn't validly chunked.
+
+    Accepts bare LF line ends too: raw (non-base64) Burp exports lose every CR in XML parsing.
+    """
     out = bytearray()
     pos = 0
     while True:
-        eol = body.find(b"\r\n", pos)
+        eol = body.find(b"\n", pos)
         if eol < 0:
             raise ValueError("missing chunk size line")
         size_text = body[pos:eol].split(b";", 1)[0].strip()
@@ -26,13 +29,18 @@ def dechunk(body: bytes) -> bytes:
             raise ValueError(f"bad chunk size {size_text[:20]!r}") from None
         if size < 0:
             raise ValueError("negative chunk size")
-        pos = eol + 2
+        pos = eol + 1
         if size == 0:
             return bytes(out)
-        if body[pos + size : pos + size + 2] != b"\r\n":
+        end = pos + size
+        if body[end : end + 2] == b"\r\n":
+            next_pos = end + 2
+        elif body[end : end + 1] == b"\n":
+            next_pos = end + 1
+        else:
             raise ValueError("truncated chunk")
-        out += body[pos : pos + size]
-        pos += size + 2
+        out += body[pos:end]
+        pos = next_pos
 
 
 def clean_response(headers: Iterable[tuple[str, str]], body: bytes) -> tuple[list[tuple[str, str]], bytes]:
