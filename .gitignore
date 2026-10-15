@@ -4,3 +4,6 @@ __pycache__/
 *.egg-info/
 dist/
 .superpowers/
+
+# real Burp exports (client data - never commit)
+/exports/
