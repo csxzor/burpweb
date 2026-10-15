@@ -78,17 +78,21 @@ def split_message(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
     return start, headers, body
 
 
-def load(path: str | Path) -> LoadResult:
-    """Parse a Burp export. Bad items are counted, never fatal; a bad file raises BurpXmlError."""
+def load_stream(source, name: str = "") -> LoadResult:
+    """Parse a Burp export from a path or a binary file object.
+
+    Bad items are counted, never fatal; a bad file raises BurpXmlError.
+    """
+    label = name or str(source)
     result = LoadResult()
     index = 0
     root = None
     try:
-        for event, elem in ET.iterparse(path, events=("start", "end")):
+        for event, elem in ET.iterparse(source, events=("start", "end")):
             if root is None:
                 if elem.tag != "items":
                     raise BurpXmlError(
-                        f"{path}: root element is <{elem.tag}>, expected <items> "
+                        f"{label}: root element is <{elem.tag}>, expected <items> "
                         "(export with Proxy > HTTP history > Save items)"
                     )
                 root = elem
@@ -108,21 +112,29 @@ def load(path: str | Path) -> LoadResult:
             root.clear()  # keep memory flat on large exports
     except ET.ParseError as e:
         raise BurpXmlError(
-            f"{path}: not valid XML ({e}). If you exported without base64, re-export with "
+            f"{label}: not valid XML ({e}). If you exported without base64, re-export with "
             "'Base64-encode requests and responses' enabled."
         ) from None
     except OSError as e:
-        raise BurpXmlError(f"{path}: {e.strerror or e}") from None
+        raise BurpXmlError(f"{label}: {e.strerror or e}") from None
     return result
+
+
+def load(path: str | Path) -> LoadResult:
+    return load_stream(path, name=str(path))
 
 
 def load_many(paths: list[str | Path]) -> LoadResult:
     """Load several exports as one history, in the given order (later files are more recent)."""
+    return load_many_streams([(Path(p).name, p) for p in paths])
+
+
+def load_many_streams(items: list[tuple[str, object]]) -> LoadResult:
+    """items: (display name, path-or-stream). Combines in order; later items win."""
     combined = LoadResult()
-    tag = len(paths) > 1
-    for path in paths:
-        result = load(path)
-        name = Path(path).name
+    tag = len(items) > 1
+    for name, source in items:
+        result = load_stream(source, name=name)
         combined.records += [replace(r, source=name) for r in result.records] if tag else result.records
         combined.skipped_no_response += result.skipped_no_response
         combined.malformed += [(i, f"{reason} (in {name})" if tag else reason) for i, reason in result.malformed]

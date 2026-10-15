@@ -93,3 +93,22 @@ def test_stream_encryptor_incremental_round_trip():
 def test_stream_encryptor_empty_input():
     enc = vault.StreamEncryptor(KEY, snapshot_id="s", label="0")
     assert vault.decrypt_bytes(KEY, enc.finish(), snapshot_id="s", label="0") == b""
+
+
+def test_verify_file_accepts_good_and_rejects_tampered_or_truncated(tmp_path):
+    blob = enc(os.urandom(5000), chunk=1024)
+    good = tmp_path / "good.enc"
+    good.write_bytes(blob)
+    vault.verify_file(KEY, good, snapshot_id="snap1", label="0")  # no exception
+
+    flipped = bytearray(blob)
+    flipped[-1] ^= 1
+    (tmp_path / "flipped.enc").write_bytes(bytes(flipped))
+    (tmp_path / "chopped.enc").write_bytes(blob[: len(blob) - 1100])
+    frame = 4 + 1024 + 16  # length prefix + chunk + tag
+    (tmp_path / "boundary.enc").write_bytes(blob[: 4 + 8 + 4 * frame])  # whole last chunk removed
+    for name in ("flipped", "chopped", "boundary"):
+        with pytest.raises(vault.BadData):
+            vault.verify_file(KEY, tmp_path / f"{name}.enc", snapshot_id="snap1", label="0")
+    with pytest.raises(vault.BadData):
+        vault.verify_file(KEY, good, snapshot_id="snap1", label="other")

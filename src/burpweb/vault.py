@@ -129,6 +129,38 @@ def decrypt_stream(
     yield from decoded
 
 
+def verify_file(key: bytes, path, *, snapshot_id: str, label: str) -> None:
+    """Authenticate a whole encrypted file chunk by chunk, holding one chunk in memory.
+
+    Raises BadData for tampering, truncation or a wrong snapshot/label. A chunk is the final
+    one exactly when the file ends right after it, which is what its AAD must say.
+    """
+    aes = AESGCM(key)
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        head = f.read(len(_MAGIC) + _PREFIX_LEN)
+        if len(head) != len(_MAGIC) + _PREFIX_LEN or head[: len(_MAGIC)] != _MAGIC:
+            raise BadData("bad magic")
+        prefix = head[len(_MAGIC):]
+        index = 0
+        while True:
+            raw = f.read(_LEN.size)
+            if len(raw) != _LEN.size:
+                raise BadData("truncated length")
+            (clen,) = _LEN.unpack(raw)
+            ct = f.read(clen)
+            if len(ct) != clen:
+                raise BadData("truncated chunk")
+            final = f.tell() == size
+            try:
+                aes.decrypt(prefix + _LEN.pack(index), ct, _aad(snapshot_id, label, index, final))
+            except InvalidTag:
+                raise BadData(f"authentication failed at chunk {index}") from None
+            if final:
+                return
+            index += 1
+
+
 def encrypt_bytes(key: bytes, data: bytes, *, snapshot_id: str, label: str, chunk_size: int = CHUNK) -> bytes:
     return b"".join(encrypt_stream(key, [data], snapshot_id=snapshot_id, label=label, chunk_size=chunk_size))
 
