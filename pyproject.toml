@@ -10,7 +10,10 @@ dependencies = ["mitmproxy>=12.2"]
 burpweb = "burpweb.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1.4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -21,3 +24,4 @@ packages = ["src/burpweb"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

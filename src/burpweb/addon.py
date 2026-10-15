@@ -6,6 +6,7 @@ import collections
 import html
 import sys
 import time
+from collections.abc import Callable
 from http.client import responses as REASONS
 from typing import TextIO
 
@@ -26,9 +27,10 @@ MISS_PAGE = """<!doctype html>
 
 
 class Replay:
-    def __init__(self, matcher: Matcher, out: TextIO | None = None):
+    def __init__(self, matcher: Matcher, out: TextIO | None = None, on_event: Callable[[dict], None] | None = None):
         self.matcher = matcher
         self.out = out or sys.stdout
+        self.on_event = on_event
         self.misses: collections.Counter[str] = collections.Counter()
 
     def request(self, flow: http.HTTPFlow) -> None:
@@ -77,6 +79,8 @@ class Replay:
         host, port = data.server.address or ("?", 0)
         data.server.error = "burpweb never connects upstream"
         print(f"{'BLOCKED':<8} upstream connection to {host}:{port}", file=self.out, flush=True)
+        if self.on_event:
+            self.on_event({"type": "blocked", "address": f"{host}:{port}"})
 
     def done(self) -> None:
         print(self.summary(), file=self.out, flush=True)
@@ -91,3 +95,9 @@ class Replay:
     def _log(self, tier: Tier, method: str, url: str, status: int, item: str | None = None) -> None:
         extra = f"  [{item}]" if item is not None else ""
         print(f"{tier.value:<8} {method} {url}  -> {status}{extra}", file=self.out, flush=True)
+        if self.on_event:
+            self.on_event({"type": "request", "tier": tier.value, "method": method, "url": url,
+                           "status": status, "item": item})
+            if tier is Tier.MISS:
+                self.on_event({"type": "misses",
+                               "misses": [{"key": k, "count": c} for k, c in self.misses.most_common()]})

@@ -104,3 +104,13 @@ def test_summary_lists_misses_by_count():
 def test_summary_without_misses():
     addon, _ = replay(make_record(1))
     assert addon.summary() == "No misses: every request was answered from the snapshot."
+
+
+def test_on_event_reports_requests_and_misses():
+    events = []
+    addon = Replay(Matcher([make_record(1, path="/a")]), out=io.StringIO(), on_event=events.append)
+    addon.request(flow("GET", "https://example.com/a"))
+    addon.request(flow("GET", "https://example.com/zzz"))
+    assert [e["type"] for e in events] == ["request", "request", "misses"]
+    assert events[0]["tier"] == "EXACT" and events[1]["tier"] == "MISS"
+    assert events[2]["misses"] == [{"key": "GET https://example.com/zzz", "count": 1}]
