@@ -1,0 +1,22 @@
+:root {
+  --bg: #0b0c0e;
+  --panel: #121418;
+  --raised: #191c21;
+  --line: #262a31;
+  --text: #e7e5e1;
+  --muted: #8b9099;
+  --accent: #8b7cf6;
+  --exact: #3fcf8e;
+  --fallback: #e8b44c;
+  --head: #6cb6ff;
+  --miss: #f2667a;
+  --blocked: #9198a1;
+
+  --font-ui: "Schibsted Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius: 10px;
+  --radius-drop: 14px;
+  --radius-badge: 6px;
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.45);
+}

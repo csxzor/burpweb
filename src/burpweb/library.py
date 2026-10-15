@@ -159,10 +159,20 @@ class Library:
         files = (existing.files if existing else []) + [
             {"name": fn, "size": len(m)} for fn, m in zip(filenames, materialized)]
         created = existing.created if existing else datetime.now(timezone.utc).isoformat()
+        rows: dict[str, dict] = {}
+        for r in result.records:
+            row = rows.setdefault(r.origin, {"items": 0, "paths": set()})
+            row["items"] += 1
+            row["paths"].add(r.path)
+        by_origin = sorted(
+            ({"origin": o, "items": v["items"], "paths": len(v["paths"])} for o, v in rows.items()),
+            key=lambda row: -row["items"],  # sorted() is stable, so ties keep first-seen order
+        )
         stats = {"items": len(result.records),
-                 "origins": len({r.origin for r in result.records}),
+                 "origins": len(rows),
                  "skipped": result.skipped_no_response,
-                 "malformed": result.malformed}
+                 "malformed": result.malformed,
+                 "by_origin": by_origin}
         meta = {"name": name, "created": created, "files": files, "stats": stats}
         self._write(tmp / "meta.enc",
                     vault.encrypt_bytes(key, json.dumps(meta).encode(), snapshot_id=sid, label="meta"))

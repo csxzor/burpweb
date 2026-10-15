@@ -1,0 +1,43 @@
+.library .new-snapshot {
+  margin: 12px 12px 4px;
+  text-align: left;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.library .new-snapshot:hover { background: var(--raised); color: var(--text); }
+.library .new-snapshot[data-active="true"] { border-style: solid; border-color: var(--accent); color: var(--text); }
+
+.cards { list-style: none; margin: 0; padding: 8px 12px 12px; display: grid; gap: 6px; overflow: auto; }
+.card { position: relative; border-radius: var(--radius); background: transparent; border: 1px solid transparent; }
+.card:hover { background: var(--raised); }
+.card[data-selected="true"] { background: var(--raised); border-color: var(--line); }
+.card[data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: -1px; top: 10px; bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.card-main {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+}
+.card-name { display: flex; align-items: center; gap: 8px; font-weight: 500; overflow-wrap: anywhere; }
+.card-meta { font-size: 11px; color: var(--muted); }
+.badge-damaged {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: var(--radius-badge);
+  background: color-mix(in srgb, var(--miss) 16%, transparent); color: var(--miss);
+}
+.card-actions { display: flex; gap: 6px; padding: 0 12px 10px; }
+.card-edit { padding: 8px 12px 10px; display: grid; gap: 6px; }
+.empty { padding: 16px; }

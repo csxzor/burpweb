@@ -1,0 +1,21 @@
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 12, 14, 0.82);
+  pointer-events: none; /* drag events must keep reaching the page underneath */
+}
+.drag-overlay-frame {
+  display: grid;
+  gap: 6px;
+  place-items: center;
+  width: calc(100vw - 48px);
+  height: calc(100vh - 48px);
+  align-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: 20px;
+  box-shadow: var(--shadow-float);
+}
+.drag-overlay-title { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }

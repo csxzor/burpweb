@@ -133,3 +133,21 @@ def test_permissions(lib, tmp_path):
     assert stat.S_IMODE((root).stat().st_mode) == 0o700
     f = root / snap.id / "files" / "0.enc"
     assert stat.S_IMODE(f.stat().st_mode) == 0o600
+
+
+def test_stats_include_origin_table(lib):
+    other = b"GET /q HTTP/1.1\r\nHost: shop.invalid\r\n\r\n"
+    api = b"GET /a HTTP/1.1\r\nHost: api.invalid:8080\r\n\r\n"
+    xml = make_xml([
+        make_item(host="shop.invalid", request=REQ, response=OK),
+        make_item(host="shop.invalid", request=other, response=OK),
+        make_item(host="api.invalid", port=8080, protocol="http", request=api, response=OK),
+    ]).encode()
+    snap = lib.create("s", [xml], ["a.xml"])
+    expected = [
+        {"origin": "https://shop.invalid", "items": 2, "paths": 2},
+        {"origin": "http://api.invalid:8080", "items": 1, "paths": 1},
+    ]
+    assert snap.stats["by_origin"] == expected
+    assert lib.list()[0].stats["by_origin"] == expected
+    assert snap.stats["origins"] == 2  # the existing count is untouched
