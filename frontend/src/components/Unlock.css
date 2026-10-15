@@ -1,0 +1,30 @@
+.unlock { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+.unlock-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-drop);
+  padding: 32px;
+  box-shadow: var(--shadow-float);
+}
+.unlock-body { display: grid; gap: 14px; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: 0.08em; color: var(--muted); }
+.brand-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+.unlock-card h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.unlock-card p { margin: 0; }
+.unlock-card label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.strength { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.strength-track { flex: 1; height: 4px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.strength-bar { height: 100%; width: 8%; background: var(--miss); transition: width 0.25s, background-color 0.25s; }
+.strength-bar[data-level="1"] { width: 38%; background: var(--fallback); }
+.strength-bar[data-level="2"] { width: 68%; background: var(--head); }
+.strength-bar[data-level="3"] { width: 100%; background: var(--exact); }
+.warning {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--fallback);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.field-error { color: var(--miss); font-size: 12px; }

@@ -1,0 +1,17 @@
+.main-grid {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
+  background: var(--bg);
+}
+.col { min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
+.col.library { border-right: 1px solid var(--line); }
+.col.feed { border-left: 1px solid var(--line); }
+.col.stage { background: var(--bg); overflow: auto; padding: 28px 32px; }
+.col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
