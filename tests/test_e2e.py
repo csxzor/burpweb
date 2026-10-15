@@ -6,6 +6,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -102,6 +103,49 @@ def test_plain_http_non_default_port(proxy):
 def test_unknown_url_is_snapshot_404(proxy):
     code, body = curl(proxy, "https://shop.invalid/missing")
     assert code == 404 and "Not in snapshot" in body
+
+
+@pytest.fixture
+def target_listener():
+    """A local stand-in for the real target; records every connection it accepts."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    server.settimeout(0.2)
+    accepted = []
+
+    def accept_loop():
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                continue
+            accepted.append(conn)
+
+    stop = threading.Event()
+    thread = threading.Thread(target=accept_loop, daemon=True)
+    thread.start()
+    yield server.getsockname()[1], accepted
+    stop.set()
+    thread.join()
+    server.close()
+
+
+@pytest.mark.parametrize("payload", [b"SSH-2.0-OpenSSH_9.0\r\n", b"hi"])
+def test_non_http_tunnel_never_reaches_target(proxy, target_listener, payload):
+    port, _, _ = proxy
+    target_port, accepted = target_listener
+    with socket.create_connection(("127.0.0.1", port)) as client:
+        client.sendall(f"CONNECT 127.0.0.1:{target_port} HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\n\r\n".encode())
+        client.settimeout(2)
+        client.recv(200)
+        client.sendall(payload)
+        try:
+            client.recv(200)
+        except OSError:
+            pass
+    time.sleep(0.5)
+    assert accepted == []
 
 
 def test_zz_shutdown_prints_log_and_miss_summary(proxy):

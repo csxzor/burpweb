@@ -104,8 +104,11 @@ async def run_proxy(addons: list, *, port: int, confdir: Path) -> None:
         with_termlog=True,
         with_dumper=False,
     )
-    # lazy + no upstream cert: mitmproxy never opens a connection to the real server.
-    master.options.update(connection_strategy="lazy", upstream_cert=False, http3=False, termlog_verbosity="warn")
+    # lazy + no upstream cert + no raw TCP: mitmproxy has no reason to open a connection to the real
+    # server; Replay.server_connect refuses any that it still attempts.
+    master.options.update(
+        connection_strategy="lazy", upstream_cert=False, http3=False, rawtcp=False, termlog_verbosity="warn"
+    )
     master.addons.add(*addons)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

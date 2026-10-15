@@ -71,6 +71,13 @@ class Replay:
         index = record.index if tier in (Tier.FALLBACK, Tier.HEAD) else None
         self._log(tier, req.method, url, record.status, index)
 
+    def server_connect(self, data) -> None:
+        # Last line of defence: traffic that never reaches the request hook (raw TCP tunnels,
+        # non-HTTP TLS) would otherwise be relayed to the real target.
+        host, port = data.server.address or ("?", 0)
+        data.server.error = "burpweb never connects upstream"
+        print(f"{'BLOCKED':<8} upstream connection to {host}:{port}", file=self.out, flush=True)
+
     def done(self) -> None:
         print(self.summary(), file=self.out, flush=True)
 
