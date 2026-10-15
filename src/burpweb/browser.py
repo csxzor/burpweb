@@ -26,6 +26,8 @@ def user_js(port: int) -> str:
         "network.proxy.allow_hijacking_localhost": True,
         "network.trr.mode": 5,
         "network.http.http3.enable": False,
+        # WebRTC uses UDP that ignores the proxy, so page scripts could reach real servers.
+        "media.peerconnection.enabled": False,
         # Silence Firefox's own background traffic.
         "app.update.auto": False,
         "extensions.update.enabled": False,

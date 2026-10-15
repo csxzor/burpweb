@@ -32,6 +32,7 @@ def test_user_js_sets_proxy_and_quiets_firefox():
         'user_pref("network.http.http3.enable", false);',
         'user_pref("browser.safebrowsing.malware.enabled", false);',
         'user_pref("network.captive-portal-service.enabled", false);',
+        'user_pref("media.peerconnection.enabled", false);',
     ]:
         assert line in js
 
