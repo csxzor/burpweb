@@ -19,7 +19,12 @@ EXPORTS_HELP = "Burp XML from Proxy > HTTP history > Save items; several files a
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="burpweb", description="Browse a Burp Suite HTTP history export offline.")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
+    parser.set_defaults(command="ui", port=8080, no_open=False)  # a bare `burpweb` opens the control page
+
+    ui = sub.add_parser("ui", help="open the control page in a browser (default)")
+    ui.add_argument("--port", type=int, default=8080, help="control page port (default: %(default)s)")
+    ui.add_argument("--no-open", action="store_true", help="print the URL instead of opening a browser")
 
     serve = sub.add_parser("serve", help="run the replay proxy")
     serve.add_argument("exports", type=Path, nargs="+", help=EXPORTS_HELP)
@@ -39,6 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "ui":
+        from burpweb.webapp import run
+
+        try:
+            run(port=args.port, open_browser=not args.no_open)
+        except KeyboardInterrupt:
+            pass
+        return 0
     try:
         result = load_many(args.exports)
     except BurpXmlError as e:

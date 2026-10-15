@@ -80,3 +80,15 @@ def test_port_in_use_exits_with_hint(write_xml, tmp_path):
         )
     assert proc.returncode == 1
     assert "--port" in proc.stderr
+
+
+def test_bare_command_defaults_to_ui():
+    from burpweb.cli import build_parser
+    args = build_parser().parse_args([])
+    assert (args.command, args.port, args.no_open) == ("ui", 8080, False)
+
+
+def test_subcommands_keep_their_own_defaults():
+    from burpweb.cli import build_parser
+    assert build_parser().parse_args(["serve", "x.xml"]).port == 8081
+    assert build_parser().parse_args(["ui", "--port", "9000", "--no-open"]).port == 9000

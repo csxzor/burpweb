@@ -33,6 +33,19 @@ class _Ready:
             self.fut.set_result(instances)
 
 
+async def _close_listeners(master) -> None:
+    """Close the proxy's listening sockets.
+
+    Master.shutdown() only ends the run loop; mitmproxy never closes its own listeners because
+    mitmdump just exits the process. Here the process lives on, so without this the old proxy
+    would keep answering on its port and a restart on that port would fail.
+    """
+    proxy = master.addons.get("proxyserver")
+    for instance in list(proxy.servers):
+        if instance.is_running:
+            await instance.stop()
+
+
 class ReplaySession:
     def __init__(self, confdir: Path):
         self.confdir = Path(confdir)
@@ -83,6 +96,7 @@ class ReplaySession:
         failed = [i for i in instances if not i.is_running]
         if failed:
             exc = failed[0].last_exception
+            await _close_listeners(master)
             master.shutdown()
             await task
             raise ReplayStartError(str(exc) if exc else f"could not bind port {port}")
@@ -94,6 +108,7 @@ class ReplaySession:
             return
         master, task = self._master, self._task
         self._master = self._task = self._port = None
+        await _close_listeners(master)
         master.shutdown()
         await task
         self._emit({"type": "replay", "running": False, "port": None})

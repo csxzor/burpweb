@@ -66,3 +66,22 @@ async def test_switch_snapshots(tmp_path):
     await _wait_running(session)
     assert session.state["port"] == p2
     await session.stop()
+
+
+async def test_stop_actually_closes_the_port(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    port = free_port()
+    await session.start([make_record(1, host="shop.invalid", path="/x")], port)
+    await session.stop()
+    with pytest.raises(OSError):  # nothing may still be listening after stop()
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+
+
+async def test_restart_on_the_same_port_after_stop(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    port = free_port()
+    await session.start([make_record(1, host="shop.invalid", path="/x")], port)
+    await session.stop()
+    await session.start([make_record(1, host="shop.invalid", path="/x")], port)  # must not hit "address in use"
+    assert session.state == {"running": True, "port": port}
+    await session.stop()
