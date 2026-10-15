@@ -1,0 +1,29 @@
+.chips { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.chip {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.chip[data-status="error"] { border-color: color-mix(in srgb, var(--miss) 50%, var(--line)); }
+.chip-order { color: var(--muted); font-size: 11px; text-align: center; }
+.chip-body { min-width: 0; display: grid; gap: 6px; }
+.chip-line { display: flex; justify-content: space-between; gap: 12px; }
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.chip-size { color: var(--muted); font-size: 11px; }
+.chip-track { height: 4px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.chip-bar { height: 100%; width: 0; background: var(--accent); }
+.chip[data-status="done"] .chip-bar { background: var(--exact); }
+.chip-error { color: var(--miss); font-size: 12px; }
+.chip-state { font-size: 13px; width: 16px; text-align: center; }
+.chip[data-status="done"] .chip-state { color: var(--exact); }
+.chip[data-status="error"] .chip-state { color: var(--miss); }
+.chip-remove {
+  width: 24px; height: 24px; line-height: 1; padding: 0;
+  background: none; border: 0; border-radius: 6px; color: var(--muted); font-size: 16px;
+}
+.chip-remove:hover { background: var(--raised); color: var(--text); }

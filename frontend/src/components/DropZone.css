@@ -1,0 +1,28 @@
+.dropzone {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  min-height: 220px;
+  padding: 28px;
+  text-align: center;
+  background: var(--panel);
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: var(--radius-drop);
+  cursor: pointer;
+  animation: dropzone-breathe 2.4s ease-in-out infinite;
+}
+.dropzone[data-compact] { min-height: 84px; padding: 14px; }
+.dropzone[data-over] {
+  animation: none;
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--raised);
+}
+.dropzone-icon { font-size: 22px; line-height: 1; color: var(--accent); }
+.dropzone-title { font-size: 15px; font-weight: 700; }
+.dropzone-hint { color: var(--muted); }
+@keyframes dropzone-breathe {
+  0%, 100% { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  50% { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+}

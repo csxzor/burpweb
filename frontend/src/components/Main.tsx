@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { useWindowDrop } from "../dnd";
 import type { ReplayState, Snapshot, View } from "../types";
+import { useUploads } from "../useUploads";
+import { DragOverlay } from "./DragOverlay";
 import { Library } from "./Library";
+import { NewSnapshot } from "./NewSnapshot";
 import "./Main.css";
 
 export function Main({ onLocked }: { onLocked: () => void }) {
@@ -9,6 +13,11 @@ export function Main({ onLocked }: { onLocked: () => void }) {
   const [view, setView] = useState<View>({ kind: "new" });
   const [replay, setReplay] = useState<ReplayState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const uploads = useUploads();
+  const dragging = useWindowDrop((files) => {
+    setView({ kind: "new" });
+    uploads.add(files);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +49,11 @@ export function Main({ onLocked }: { onLocked: () => void }) {
     setReplay((r) => (r?.snapshot_id === id ? null : r));
   }, []);
 
+  const created = useCallback((snapshot: Snapshot) => {
+    setSnapshots((all) => [...all, snapshot]);
+    setView({ kind: "snapshot", id: snapshot.id });
+  }, []);
+
   const lock = useCallback(async () => {
     await api.lock().catch(() => {});
     onLocked();
@@ -57,9 +71,15 @@ export function Main({ onLocked }: { onLocked: () => void }) {
         onLock={lock}
       />
       <section className="col stage" aria-label="Stage">
-        {loadError && <p className="field-error" role="alert">Couldn't load the library: {loadError}</p>}
+        {loadError && (
+          <p className="field-error" role="alert">
+            Couldn't load the library: {loadError}
+          </p>
+        )}
+        {view.kind === "new" && <NewSnapshot uploads={uploads} onCreated={created} />}
       </section>
       <aside className="col feed" aria-label="Live feed" />
+      <DragOverlay visible={dragging} />
     </div>
   );
 }
