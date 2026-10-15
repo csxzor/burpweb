@@ -21,14 +21,17 @@ The existing `serve` and `list` CLI commands are unchanged.
 
 ```
 burpweb            # same as `burpweb ui`
-burpweb ui [--port 8080] [--no-open]
+burpweb ui [--port 8765] [--no-open]
 ```
 
 `burpweb ui` starts the control server on `127.0.0.1`, prints the URL and opens
 the default browser at `http://127.0.0.1:<port>/?token=<random>`. If the port
 is busy, it tries the next ports, up to `<port>+20`, and prints the URL it
 actually bound. The replay proxy runs in the same process and event loop, on
-port 8081 by default, which can be changed in the UI.
+port 8081 by default, which can be changed in the UI. The control page's default port is 8765,
+not 8080: 8080 is Burp Suite's own default proxy port, and a control page that took 8081 as
+its fallback would collide with the replay default. The replay API also refuses the control
+page's own port.
 
 ## Architecture
 

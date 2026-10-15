@@ -92,11 +92,12 @@ class TokenHandler(tornado.web.RequestHandler):
 
 class StateHandler(_Base):
     def get(self):
-        self.finish({"vault": self.library.state, "replay": self.session.state})
+        state = self.session.state
+        self.finish({"vault": self.library.state, "replay": state if state["running"] else None})
 
 
 class VaultHandler(_Base):
-    def post(self, action):
+    async def post(self, action):
         body = self.json_body()
         if action == "create":
             if self.library.state != "new":
@@ -112,7 +113,9 @@ class VaultHandler(_Base):
             else:
                 self.set_status(401); self.finish({"error": "wrong passphrase"})
         elif action == "lock":
-            asyncio.ensure_future(self.session.stop())
+            await self.session.stop()
+            _purge_uploads(self.app_state)
+            self.library.cleanup_temp()  # also staged uploads still being written
             self.library.lock()
             self.finish({"ok": True})
         else:
@@ -134,8 +137,9 @@ class SnapshotsHandler(_Base):
         uploads = self.app_state["uploads"]
         try:
             sources, names = _claim(uploads, body["uploads"], self.library)
-        except KeyError:
-            self.set_status(400); self.finish({"error": "unknown upload id"}); return
+        except (KeyError, FileNotFoundError, vault.BadData):
+            _drop(uploads, body.get("uploads") or [])
+            self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
             snap = self.library.create(body["name"], sources, names)
         except (BurpXmlError, ValueError) as e:
@@ -155,20 +159,26 @@ class SnapshotHandler(_Base):
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         self.finish(vars(snap))
 
-    def delete(self, sid):
+    async def delete(self, sid):
         if not self.require_unlocked():
             return
-        if self.session.state["running"] and self.app_state.get("replay_sid") == sid:
-            asyncio.ensure_future(self.session.stop())
+        if self.session.state["snapshot_id"] == sid:
+            await self.session.stop()
         self.library.delete(sid)
         self.set_status(204); self.finish()
 
+
+class SnapshotFilesHandler(_Base):
     def post(self, sid):  # add files
         if not self.require_unlocked():
             return
         body = self.json_body()
         uploads = self.app_state["uploads"]
-        sources, names = _claim(uploads, body["uploads"], self.library)
+        try:
+            sources, names = _claim(uploads, body["uploads"], self.library)
+        except (KeyError, FileNotFoundError, vault.BadData):
+            _drop(uploads, body.get("uploads") or [])
+            self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
             snap = self.library.add_files(sid, sources, names)
         except SnapshotDamaged:
@@ -194,9 +204,15 @@ class UploadHandler(_Base):
     def prepare(self):
         super().prepare()
         self.enc = None
+        self._registered = False
         if self._finished or not self.require_unlocked():
             return
         self.upload_id = self.path_args[0]
+        taken = self.app_state["uploads"].keys() | self.app_state["inflight"]
+        if self.upload_id in taken:  # a second PUT would clobber (and on abort delete) the first
+            self.set_status(409); self.finish({"error": "upload id already used"}); return
+        self.app_state["inflight"].add(self.upload_id)
+        self._registered = True
         self.size = 0
         self.tmp = self.library.root / f".tmp-upload-{self.upload_id}"
         self.tmp.mkdir(parents=True, exist_ok=True)
@@ -216,15 +232,27 @@ class UploadHandler(_Base):
     def put(self, upload_id):
         self.out.write(self.enc.finish())
         self.out.close()
+        if self.library.state != "unlocked":  # locked while the body was still arriving
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.set_status(423); self.finish({"error": "library locked"}); return
         name = self.get_argument("name", "upload.xml")
         self.app_state["uploads"][upload_id] = {"name": name, "path": self.tmp, "size": self.size}
         self.finish({"upload_id": upload_id, "size": self.size})
+
+    def _release(self):
+        if self._registered:
+            self._registered = False
+            self.app_state["inflight"].discard(self.upload_id)
+
+    def on_finish(self):
+        self._release()
 
     def on_connection_close(self):
         out = getattr(self, "out", None)
         if out is not None and not out.closed:  # client went away mid-upload
             out.close()
             shutil.rmtree(self.tmp, ignore_errors=True)
+        self._release()
 
 
 class ReplayHandler(_Base):
@@ -234,28 +262,38 @@ class ReplayHandler(_Base):
         body = self.json_body()
         sid = body["snapshot_id"]
         port = int(body.get("port") or 8081)
+        control_port = self.request.connection.stream.socket.getsockname()[1]
+        if port == control_port:
+            self.set_status(409)
+            self.finish({"error": f"port {port} is the control page's own; choose another for the replay"})
+            return
         try:
             records = self.library.load_records(sid)
         except SnapshotDamaged:
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         try:
-            await self.session.start(records, port)
+            await self.session.start(records, port, snapshot_id=sid)
         except ReplayStartError as e:
             self.set_status(409); self.finish({"error": str(e)}); return
-        self.app_state["replay_sid"] = sid
-        self.app_state["replay_url"] = records[0].url if records else "https://localhost/"
+        if self.library.state != "unlocked":  # Lock ran while this start was queued behind it
+            await self.session.stop()
+            self.set_status(423); self.finish({"error": "library locked"}); return
         self.finish({"snapshot_id": sid, "port": port, "running": True})
 
     async def delete(self):
+        if not self.require_unlocked():
+            return
         await self.session.stop()
         self.set_status(204); self.finish()
 
 
 class BrowserHandler(_Base):
     def post(self):
+        if not self.require_unlocked():
+            return
         if not self.session.state["running"]:
             self.set_status(409); self.finish({"error": "no replay running"}); return
-        launcher = self.session.open_browser(self.app_state["replay_url"])
+        launcher = self.session.open_browser()
         if launcher.process is None:
             self.set_status(409)
             self.finish({"error": "firefox/certutil not available; see terminal for manual setup"})
@@ -313,9 +351,13 @@ def _drop(uploads, ids):
             shutil.rmtree(info["path"], ignore_errors=True)
 
 
+def _purge_uploads(state):
+    _drop(state["uploads"], list(state["uploads"]))
+
+
 def make_app(library, session, token, *, static_dir=None):
     state = {"library": library, "session": session, "token": token,
-             "uploads": {}, "static_dir": static_dir, "replay_sid": None, "replay_url": None}
+             "uploads": {}, "inflight": set(), "static_dir": static_dir}
     kw = {"app_state": state}
     routes = [
         (r"/", TokenHandler, kw),
@@ -323,7 +365,7 @@ def make_app(library, session, token, *, static_dir=None):
         (r"/api/vault/(create|unlock|lock)", VaultHandler, kw),
         (r"/api/snapshots", SnapshotsHandler, kw),
         (r"/api/snapshots/([0-9a-f]+)", SnapshotHandler, kw),
-        (r"/api/snapshots/([0-9a-f]+)/files", SnapshotHandler, kw),
+        (r"/api/snapshots/([0-9a-f]+)/files", SnapshotFilesHandler, kw),
         (r"/api/uploads/([A-Za-z0-9_-]+)", UploadHandler, kw),
         (r"/api/replay", ReplayHandler, kw),
         (r"/api/browser", BrowserHandler, kw),
@@ -337,7 +379,7 @@ def make_app(library, session, token, *, static_dir=None):
     return app
 
 
-def run(host="127.0.0.1", port=8080, open_browser=True, static_dir=None):
+def run(host="127.0.0.1", port=8765, open_browser=True, static_dir=None):
     from pathlib import Path as _P
     default_static = _P(__file__).parent / "static"
     static = static_dir or (str(default_static) if default_static.exists() else None)
@@ -366,6 +408,8 @@ def run(host="127.0.0.1", port=8080, open_browser=True, static_dir=None):
             await asyncio.Event().wait()  # Tornado and the replay proxy share this one loop
         finally:
             await session.stop()
+            _purge_uploads(app.settings["bw_state"])
+            library.cleanup_temp()
             library.lock()
 
     asyncio.run(serve_forever())

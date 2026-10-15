@@ -122,7 +122,7 @@ class Library:
         return True
 
     def create(self, name, sources, filenames):
-        return self._write_snapshot(secrets.token_hex(8), name, list(sources), list(filenames), existing=None)
+        return self._write_snapshot(secrets.token_hex(16), name, list(sources), list(filenames), existing=None)
 
     def add_files(self, sid, sources, filenames):
         key = self._require_key()

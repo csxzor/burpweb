@@ -85,7 +85,7 @@ def test_port_in_use_exits_with_hint(write_xml, tmp_path):
 def test_bare_command_defaults_to_ui():
     from burpweb.cli import build_parser
     args = build_parser().parse_args([])
-    assert (args.command, args.port, args.no_open) == ("ui", 8080, False)
+    assert (args.command, args.port, args.no_open) == ("ui", 8765, False)
 
 
 def test_subcommands_keep_their_own_defaults():

@@ -82,6 +82,52 @@ class TestFlow(Base):
         assert r.code == 200
         snaps = json.loads(self.api("GET", "/api/snapshots").body)
         assert snaps[0]["name"] == "Treasury" and snaps[0]["stats"]["items"] == 1
+        assert len(snaps[0]["id"]) == 32  # 16 random bytes, as the spec says
+
+    def _snapshot(self, upload_id="u1"):
+        self.api("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
+        self.fetch(f"/api/uploads/{upload_id}?name=h.xml", method="PUT", body=XML, headers=self.cookie())
+        return json.loads(self.api("POST", "/api/snapshots", {"name": "s", "uploads": [upload_id]}).body)["id"]
+
+    def test_lock_discards_staged_uploads_and_claiming_one_is_a_400(self):
+        self.api("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
+        self.fetch("/api/uploads/u1?name=h.xml", method="PUT", body=XML, headers=self.cookie())
+        library_dir = self.get_temp_dir() / "lib"
+        assert list(library_dir.glob(".tmp-upload-*"))
+        self.api("POST", "/api/vault/lock")
+        assert not list(library_dir.glob(".tmp-upload-*"))
+        self.api("POST", "/api/vault/unlock", {"passphrase": "passphrase-123"})
+        assert self.api("POST", "/api/snapshots", {"name": "x", "uploads": ["u1"]}).code == 400
+
+    def test_reusing_an_upload_id_is_rejected_and_keeps_the_first(self):
+        self.api("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
+        first = self.fetch("/api/uploads/u1?name=h.xml", method="PUT", body=XML, headers=self.cookie())
+        again = self.fetch("/api/uploads/u1?name=other.xml", method="PUT", body=b"<x/>", headers=self.cookie())
+        assert (first.code, again.code) == (200, 409)
+        r = self.api("POST", "/api/snapshots", {"name": "s", "uploads": ["u1"]})
+        assert r.code == 200 and json.loads(r.body)["stats"]["items"] == 1
+
+    def test_unknown_upload_id_is_a_400_for_create_and_add_files(self):
+        sid = self._snapshot()
+        assert self.api("POST", "/api/snapshots", {"name": "n", "uploads": ["nope"]}).code == 400
+        assert self.api("POST", f"/api/snapshots/{sid}/files", {"uploads": ["nope"]}).code == 400
+
+    def test_wrong_verbs_are_not_routed(self):
+        sid = self._snapshot()
+        assert self.api("DELETE", f"/api/snapshots/{sid}/files").code == 405
+        assert self.api("POST", f"/api/snapshots/{sid}", {"uploads": []}).code == 405
+        assert len(json.loads(self.api("GET", "/api/snapshots").body)) == 1  # nothing was deleted
+
+    def test_browser_and_replay_stop_return_423_while_locked(self):
+        self.api("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
+        self.api("POST", "/api/vault/lock")
+        assert self.api("POST", "/api/browser").code == 423
+        assert self.api("DELETE", "/api/replay").code == 423
+
+    def test_replay_refuses_the_control_pages_own_port(self):
+        sid = self._snapshot()
+        r = self.api("POST", "/api/replay", {"snapshot_id": sid, "port": self.get_http_port()})
+        assert r.code == 409 and b"control page" in r.body
 
     def test_invalid_upload_rejected_and_cleaned(self):
         self.api("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
@@ -141,3 +187,33 @@ class TestReplay(Base):
         assert [e for e in seen if e["type"] == "request"][0]["tier"] == "EXACT"
         await call("DELETE", "/api/replay")
         ws.close()
+
+    @tornado.testing.gen_test(timeout=60)
+    async def test_start_queued_behind_lock_does_not_outlive_the_lock(self):
+        # The nasty interleaving: Lock is already waiting for the session when a Start (which
+        # passed its "unlocked" check earlier) queues up behind it. Held open deterministically
+        # by holding the session's own lock.
+        import socket
+
+        async def call(method, path, body=None, raw=None):
+            return await self.http_client.fetch(
+                self.get_url(path), method=method, headers=self.cookie(), raise_error=False,
+                body=raw if raw is not None else (json.dumps(body) if body is not None else None))
+
+        await call("POST", "/api/vault/create", {"passphrase": "passphrase-123"})
+        await call("PUT", "/api/uploads/u1?name=h.xml", raw=XML)
+        sid = json.loads((await call("POST", "/api/snapshots", {"name": "s", "uploads": ["u1"]})).body)["id"]
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
+        await self.session._lock.acquire()  # a start/stop is "in progress"
+        lock_request = asyncio.ensure_future(call("POST", "/api/vault/lock", raw=""))
+        await asyncio.sleep(0.2)  # the lock request is now waiting for the session
+        start_request = asyncio.ensure_future(call("POST", "/api/replay", {"snapshot_id": sid, "port": port}))
+        await asyncio.sleep(0.2)  # the replay request passed its checks and queued behind it
+        self.session._lock.release()
+        _, start_response = await asyncio.gather(lock_request, start_request)
+        assert start_response.code == 423
+        assert self.library.state == "locked"
+        assert self.session.state["running"] is False
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", port), timeout=2).close()

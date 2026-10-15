@@ -83,5 +83,94 @@ async def test_restart_on_the_same_port_after_stop(tmp_path):
     await session.start([make_record(1, host="shop.invalid", path="/x")], port)
     await session.stop()
     await session.start([make_record(1, host="shop.invalid", path="/x")], port)  # must not hit "address in use"
-    assert session.state == {"running": True, "port": port}
+    assert session.state["running"] is True and session.state["port"] == port
     await session.stop()
+
+
+def _refused(port):
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+
+
+async def test_concurrent_starts_do_not_orphan_a_proxy(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    rec = make_record(1, host="shop.invalid", path="/x")
+    p1, p2 = free_port(), free_port()
+    await asyncio.gather(session.start([rec], p1), session.start([rec], p2))
+    assert session.state["running"] is True
+    await session.stop()
+    _refused(p1)
+    _refused(p2)
+
+
+async def test_stop_issued_during_start_wins(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    port = free_port()
+    starting = asyncio.create_task(session.start([make_record(1, host="shop.invalid", path="/x")], port))
+    await asyncio.sleep(0)  # let start() begin
+    await session.stop()
+    await starting
+    assert session.state["running"] is False
+    _refused(port)
+
+
+async def test_stop_ends_open_connections_and_forgets_the_records(tmp_path):
+    rec = make_record(1, scheme="http", port=80, host="shop.invalid", path="/x", response_body=b"hi")
+    session = ReplaySession(confdir=tmp_path / "conf")
+    port = free_port()
+    await session.start([rec], port, snapshot_id="abc")
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    request = b"GET http://shop.invalid/x HTTP/1.1\r\nHost: shop.invalid\r\n\r\n"
+    writer.write(request)
+    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+    assert head.startswith(b"HTTP/1.1 200")
+    await reader.readexactly(2)  # the body, "hi"
+    await session.stop()
+    try:  # an already-open keep-alive connection must not keep serving after stop()
+        writer.write(request)
+        data = await asyncio.wait_for(reader.read(1000), 5)
+    except OSError:
+        data = b""
+    assert data == b""
+    assert session._records == [] and session.start_url is None
+    writer.close()
+
+
+async def test_state_and_events_carry_snapshot_id_and_timestamp(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    events = []
+    session.subscribe(events.append)
+    port = free_port()
+    assert session.state == {"running": False, "port": None, "snapshot_id": None}
+    await session.start([make_record(1, host="shop.invalid", path="/x")], port, snapshot_id="abc")
+    assert session.state == {"running": True, "port": port, "snapshot_id": "abc"}
+    await session.stop()
+    replay = [e for e in events if e["type"] == "replay"]
+    assert [(e["running"], e["snapshot_id"]) for e in replay] == [(True, "abc"), (False, "abc")]
+    assert all(isinstance(e["ts"], int) for e in events)
+
+
+async def test_busy_port_emits_toast_and_stopped_event(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    events = []
+    session.subscribe(events.append)
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        with pytest.raises(ReplayStartError):
+            await session.start([make_record(1)], busy.getsockname()[1], snapshot_id="abc")
+    toast = [e for e in events if e["type"] == "toast"]
+    assert toast and toast[0]["level"] == "error" and "another port" in toast[0]["message"]
+    assert [e for e in events if e["type"] == "replay"][-1]["running"] is False
+
+
+async def test_misses_events_are_throttled_and_the_latest_is_delivered(tmp_path):
+    session = ReplaySession(confdir=tmp_path / "conf")
+    got = []
+    session.subscribe(got.append)
+    for i in range(50):
+        session._emit({"type": "misses", "misses": [{"key": f"k{i}", "count": 1}]})
+    await asyncio.sleep(0.8)
+    misses = [e for e in got if e["type"] == "misses"]
+    assert 1 <= len(misses) <= 2
+    assert misses[-1]["misses"][0]["key"] == "k49"
