@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { motion } from "motion/react";
 import { api } from "../api";
 import { useWindowDrop } from "../dnd";
+import { emptyFeed, feedReducer } from "../feed";
 import { springs } from "../motion";
-import type { ReplayState, Snapshot, View } from "../types";
+import type { EventMsg, ReplayState, Snapshot, View } from "../types";
+import { useEvents } from "../useEvents";
 import { useToasts } from "../useToasts";
 import { useUploads } from "../useUploads";
 import { DragOverlay } from "./DragOverlay";
+import { Feed } from "./Feed";
 import { Library } from "./Library";
 import { NewSnapshot } from "./NewSnapshot";
 import { SnapshotView } from "./SnapshotView";
@@ -20,12 +23,40 @@ export function Main({ onLocked }: { onLocked: () => void }) {
   const [view, setView] = useState<View>({ kind: "new" });
   const [replay, setReplay] = useState<ReplayState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [feed, dispatchFeed] = useReducer(feedReducer, undefined, emptyFeed);
   const { toasts, push, dismiss } = useToasts();
   const uploads = useUploads();
   const dragging = useWindowDrop((files) => {
     setView({ kind: "new" });
     uploads.add(files);
   });
+
+  const onEvent = useCallback(
+    (event: EventMsg) => {
+      if (event.type === "replay") {
+        setReplay(event.running ? { running: true, port: event.port, snapshot_id: event.snapshot_id } : null);
+        if (event.running) dispatchFeed({ type: "clear" });
+      } else if (event.type === "toast") {
+        push(event.level, event.message);
+      } else {
+        dispatchFeed({ type: "event", event });
+      }
+    },
+    [push],
+  );
+
+  const onDisconnect = useCallback(() => {
+    // A dropped socket may mean the library was locked elsewhere, or that events were missed.
+    api
+      .state()
+      .then((state) => {
+        if (state.vault !== "unlocked") onLocked();
+        else setReplay(state.replay);
+      })
+      .catch(() => {});
+  }, [onLocked]);
+
+  const status = useEvents(true, { onEvent, onDisconnect });
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +170,12 @@ export function Main({ onLocked }: { onLocked: () => void }) {
           )}
         </motion.div>
       </section>
-      <aside className="col feed" aria-label="Live feed" />
+      <Feed
+        state={feed}
+        status={status}
+        running={!!replay?.running}
+        onCopied={(count) => push("info", `Copied ${count} missed URL${count === 1 ? "" : "s"}`)}
+      />
       <DragOverlay visible={dragging} />
       <Toasts toasts={toasts} onDismiss={dismiss} />
     </div>
