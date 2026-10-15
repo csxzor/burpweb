@@ -28,3 +28,4 @@ export type EventMsg =
   | { type: "replay"; running: boolean; snapshot_id: string | null; port: number | null; ts: number }
   | { type: "misses"; misses: { key: string; count: number }[]; ts: number }
   | { type: "toast"; level: "error" | "info"; message: string; ts: number };
+export type View = { kind: "new" } | { kind: "snapshot"; id: string };

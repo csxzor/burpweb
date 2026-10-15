@@ -21,6 +21,7 @@ test("a new library shows the create form", async () => {
 });
 
 test("an unlocked library shows the main screen", async () => {
+  vi.spyOn(api, "snapshots").mockResolvedValue([]);
   vi.spyOn(api, "state").mockResolvedValue({ vault: "unlocked", replay: null });
   render(<App />);
   expect(await screen.findByLabelText("Live feed")).toBeInTheDocument();
@@ -40,6 +41,7 @@ test("an unreachable server is reported", async () => {
 });
 
 test("test_locked_response_returns_to_unlock", async () => {
+  vi.spyOn(api, "snapshots").mockResolvedValue([]);
   vi.spyOn(api, "state").mockResolvedValue({ vault: "unlocked", replay: null });
   render(<App />);
   expect(await screen.findByLabelText("Live feed")).toBeInTheDocument();
