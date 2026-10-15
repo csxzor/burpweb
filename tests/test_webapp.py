@@ -217,3 +217,21 @@ class TestReplay(Base):
         assert self.session.state["running"] is False
         with pytest.raises(OSError):
             socket.create_connection(("127.0.0.1", port), timeout=2).close()
+
+
+class TestStatic(Base):
+    def get_app(self):
+        self.library = Library(self.get_temp_dir() / "lib")
+        self.session = ReplaySession(confdir=self.get_temp_dir() / "conf")
+        static = self.get_temp_dir() / "static"
+        (static / "assets").mkdir(parents=True)
+        (static / "index.html").write_text("<!doctype html><title>burpweb</title>")
+        (static / "assets" / "app.js").write_text("console.log(1)")
+        return make_app(self.library, self.session, TOKEN, static_dir=str(static))
+
+    def test_index_needs_the_token_but_assets_do_not_leak_data(self):
+        assert self.fetch("/", headers={"Host": "127.0.0.1"}).code == 403
+        page = self.fetch("/", headers=self.cookie())
+        assert page.code == 200 and b"<title>burpweb</title>" in page.body
+        asset = self.fetch("/static/assets/app.js", headers={"Host": "127.0.0.1"})
+        assert asset.code == 200 and asset.body == b"console.log(1)"

@@ -7,3 +7,4 @@ dist/
 
 # real Burp exports (client data - never commit)
 /exports/
+frontend/node_modules/
