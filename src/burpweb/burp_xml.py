@@ -136,13 +136,13 @@ def _parse_item(index: int, item: ET.Element) -> Record | None:
     path, _, query = target.partition("?")
 
     status_line, response_headers, response_body = split_message(raw_response)
-    status_parts = status_line.split()
-    if (
-        len(status_parts) < 2
-        or not status_parts[0].upper().startswith("HTTP/")
-        or not status_parts[1].isdigit()
-    ):
-        raise ValueError(f"bad status line {status_line[:60]!r}")
+    status = _status(status_line)
+    # Interim responses (100 Continue, 103 Early Hints) are stored ahead of the final one.
+    while 100 <= status < 200 and status != 101 and response_body:
+        status_line, response_headers, response_body = split_message(response_body)
+        status = _status(status_line)
+    if 100 <= status < 200:
+        return None  # a 101 upgrade (WebSocket) or a lone interim response can't be replayed
 
     scheme = (item.findtext("protocol") or "").strip().lower()
     host = (item.findtext("host") or "").strip().lower()
@@ -161,10 +161,17 @@ def _parse_item(index: int, item: ET.Element) -> Record | None:
         query=query,
         request_body=request_body,
         request_content_type=_header(request_headers, "content-type"),
-        status=int(status_parts[1]),
+        status=status,
         response_headers=tuple(response_headers),
         response_body=response_body,
     )
+
+
+def _status(status_line: str) -> int:
+    parts = status_line.split()
+    if len(parts) < 2 or not parts[0].upper().startswith("HTTP/") or not parts[1].isdigit():
+        raise ValueError(f"bad status line {status_line[:60]!r}")
+    return int(parts[1])
 
 
 def _decode(elem: ET.Element) -> bytes:

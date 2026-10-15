@@ -98,6 +98,28 @@ def test_absolute_form_request_target(write_xml):
     assert (rec.path, rec.query) == ("/a/b", "c=d")
 
 
+def test_websocket_upgrade_skipped(write_xml):
+    req = b"GET /ws HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+    resp = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+    result = load(write_xml([make_item(request=req, response=resp)]))
+    assert result.records == []
+    assert result.skipped_no_response == 1
+
+
+@pytest.mark.parametrize("interim", [b"HTTP/1.1 100 Continue\r\n\r\n", b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\n"])
+def test_interim_response_prefix_uses_final_response(write_xml, interim):
+    resp = interim + b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok"
+    (rec,) = load(write_xml([make_item(request=GET_INDEX, response=resp)])).records
+    assert rec.status == 200
+    assert rec.response_headers == (("Content-Type", "text/plain"),)
+    assert rec.response_body == b"ok"
+
+
+def test_bare_interim_response_skipped(write_xml):
+    result = load(write_xml([make_item(request=GET_INDEX, response=b"HTTP/1.1 100 Continue\r\n\r\n")]))
+    assert result.records == [] and result.skipped_no_response == 1
+
+
 def test_invalid_xml_suggests_base64(tmp_path):
     path = tmp_path / "bad.xml"
     path.write_bytes(b'<?xml version="1.0"?><items><item><response base64="false">\x01\x02</response></item></items>')

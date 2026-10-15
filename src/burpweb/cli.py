@@ -59,7 +59,7 @@ def load_summary(result: LoadResult) -> str:
     origins = {r.origin for r in result.records}
     lines = [
         f"Loaded {len(result.records)} items across {len(origins)} origin(s); "
-        f"skipped {result.skipped_no_response} without a response, {len(result.malformed)} malformed."
+        f"skipped {result.skipped_no_response} without a replayable response, {len(result.malformed)} malformed."
     ]
     lines += [f"  malformed item #{index}: {reason}" for index, reason in result.malformed]
     return "\n".join(lines)

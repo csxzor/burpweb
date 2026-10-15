@@ -24,7 +24,7 @@ def test_list_shows_origins_sorted_by_count(write_xml, capsys):
     )
     assert main(["list", str(path)]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == "Loaded 4 items across 2 origin(s); skipped 1 without a response, 0 malformed."
+    assert out[0] == "Loaded 4 items across 2 origin(s); skipped 1 without a replayable response, 0 malformed."
     assert out[1:] == [
         " ITEMS  PATHS  ORIGIN",
         "     3      2  https://example.com",
