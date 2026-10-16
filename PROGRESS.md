@@ -84,8 +84,7 @@ calling shell if the pattern appears in its own command line; use Python or `ls 
 
 ## Deferred minor findings (not fixed, decided to defer)
 
-Engine: `split_message` tries CRLFCRLF before LFLF (LF-only headers + multipart body can be dropped as
-malformed); `_decodes` fully decompresses to validate (gzip-bomb memory risk) and repeats per request;
+Engine (`split_message` LF-only + multipart bug fixed 2026-10-16, split at the earliest blank line): `_decodes` fully decompresses to validate (gzip-bomb memory risk) and repeats per request;
 `--browser` start URL is the first captured item (may be a POST/asset); relaunch while a burpweb Firefox holds
 the profile fails silently; port-in-use message order/`--mode` hint; 204/304 get `Content-Length: 0`; odd header
 names pass through.

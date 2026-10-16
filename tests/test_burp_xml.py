@@ -160,3 +160,30 @@ def test_wrong_root_element(tmp_path):
 def test_missing_file(tmp_path):
     with pytest.raises(BurpXmlError):
         load(tmp_path / "nope.xml")
+
+
+MULTIPART_BODY = (b'--b\r\nContent-Disposition: form-data; name="f"; filename="a.txt"\r\n'
+                  b"Content-Type: text/plain\r\n\r\nfile-bytes\r\n--b--\r\n")
+
+
+def test_lf_only_headers_with_a_crlf_multipart_body_are_not_malformed(write_xml):
+    req = (b"POST /upload HTTP/1.1\nHost: example.com\nContent-Type: multipart/form-data; boundary=b\n\n"
+           + MULTIPART_BODY)
+    resp = b"HTTP/1.1 200 OK\nContent-Type: text/plain\n\n" + MULTIPART_BODY
+    result = load(write_xml([make_item(request=req, response=resp)]))
+    assert result.malformed == []
+    (rec,) = result.records
+    assert rec.request_body == MULTIPART_BODY
+    assert rec.request_content_type == "multipart/form-data; boundary=b"
+    assert rec.response_body == MULTIPART_BODY
+    assert rec.response_headers == (("Content-Type", "text/plain"),)
+
+
+def test_crlf_headers_with_a_bare_lf_pair_in_the_body_split_at_the_header_end(write_xml):
+    body = b"line one\n\nline two"
+    req = b"POST /p HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\n\r\n" + body
+    resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n" + body
+    result = load(write_xml([make_item(request=req, response=resp)]))
+    assert result.malformed == []
+    (rec,) = result.records
+    assert rec.request_body == body and rec.response_body == body
