@@ -1,6 +1,6 @@
 [project]
 name = "burpweb"
-version = "0.1.0"
+version = "0.1.1"
 description = "Replay a Burp Suite HTTP history export as an offline, browsable website"
 readme = "README.md"
 requires-python = ">=3.12"
