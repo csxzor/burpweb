@@ -20,7 +20,8 @@ Stack: Python ≥ 3.12 managed with `uv`, mitmproxy 12.2, Tornado (control serve
 | Encrypted snapshot library, replay session manager, Tornado API + WebSocket, `burpweb ui` | **Done, merged to `main`**, reviewed, 142 Python tests pass |
 | Frontend (React control page) | **Done, merged to `main` (a09d3b8): 117 Vitest + 145 pytest incl. headless-Firefox e2e pass, build committed to `src/burpweb/static/`.** |
 
-`git`: branch `main`, HEAD `735342a`, no remote (so no PR is possible until one is added).
+`git`: branch `main`, remote `origin` = https://github.com/csxzor/burpweb (public), tags `v0.1.0`, `v0.1.1`. History was rewritten once
+(2026-10-16) to remove the real export filenames; keep them out of tracked files (they are in `.git/info/exclude`).
 Untracked: `docs/superpowers/plans/2026-10-15-burpweb-ui-frontend.md` (the frontend plan — **commit it**) and the
 user's three real exports the real export files.
 
@@ -113,7 +114,7 @@ worker thread (`offload` in `webapp.py`) so the replay and feed no longer freeze
 
 ## User context and preferences
 
-- Linux (Arch), Firefox (no Chromium), `uv`, Node 24. No git remote. Works from `~/Desktop/projects/burpweb`.
+- Linux (Arch), Firefox (no Chromium), `uv`, Node 24. Works from `~/Desktop/projects/burpweb`.
 - Wants a premium, fluid-animation, dark, gradient-free UI; wants to stop depending on the CLI.
 - Chose: native (inline) execution for plans; encrypted library with passphrase; local merge for the engine work.
 - A status line was configured from their `PS1` (`~/.claude/settings.json`); needs `jq` (installed).
