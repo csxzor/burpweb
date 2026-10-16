@@ -55,10 +55,12 @@ class LoadResult:
 
 def split_message(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
     """Split a raw HTTP message into (start line, headers, body)."""
-    for separator in (b"\r\n\r\n", b"\n\n"):
-        head, found, body = raw.partition(separator)
-        if found:
-            break
+    # The header block ends at whichever blank line comes first: a CRLF-only body can hold "\n\n", and an
+    # LF-only message can hold "\r\n\r\n" in its body (multipart parts use CRLF), so neither order is safe.
+    ends = [(i, len(sep)) for sep in (b"\r\n\r\n", b"\n\n") if (i := raw.find(sep)) != -1]
+    if ends:
+        cut, width = min(ends)
+        head, body = raw[:cut], raw[cut + width:]
     else:
         head, body = raw, b""
     lines = _LINE_BREAK.split(head)
