@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import webbrowser
@@ -22,6 +24,13 @@ from burpweb.library import Library, LibraryLocked, SnapshotDamaged
 from burpweb.session import ReplaySession, ReplayStartError
 
 ALLOWED_HOSTS_SUFFIX = ("127.0.0.1", "localhost")
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+SNAPSHOT_ID = re.compile(r"[0-9a-f]+")
+
+
+def _token_ok(given, token) -> bool:
+    """Constant-time comparison; encoding first keeps a non-ASCII value a mismatch instead of a TypeError."""
+    return given is not None and hmac.compare_digest(given.encode("utf-8"), token.encode("utf-8"))
 
 
 class _Base(tornado.web.RequestHandler):
@@ -34,10 +43,17 @@ class _Base(tornado.web.RequestHandler):
             self.set_status(403)
             self.finish({"error": "forbidden host"})
             return
-        if self.get_cookie("bw_token") != self.app_state["token"]:
+        if not _token_ok(self.get_cookie("bw_token"), self.app_state["token"]):
             self.set_status(403)
             self.finish({"error": "missing or bad token"})
             return
+        # SameSite ignores ports, so a page on another 127.0.0.1 port still carries our cookie. Browsers always
+        # send Origin on cross-origin writes; refuse any that is not this server. (curl and tests send none.)
+        origin = self.request.headers.get("Origin")
+        if (self.request.method not in SAFE_METHODS and origin is not None
+                and urlparse(origin).netloc != self.request.host):
+            self.set_status(403)
+            self.finish({"error": "cross-origin request refused"})
 
     def write_error(self, status_code, **kwargs):
         self.finish({"error": self._reason})
@@ -50,8 +66,31 @@ class _Base(tornado.web.RequestHandler):
     def session(self) -> ReplaySession:
         return self.app_state["session"]
 
-    def json_body(self):
-        return json.loads(self.request.body or b"{}")
+    def json_body(self) -> dict:
+        try:
+            body = json.loads(self.request.body or b"{}")
+        except ValueError:
+            raise tornado.web.HTTPError(400, reason="invalid JSON") from None
+        if not isinstance(body, dict):
+            raise tornado.web.HTTPError(400, reason="expected a JSON object")
+        return body
+
+    @staticmethod
+    def field(body: dict, key: str, kind: type):
+        value = body.get(key)
+        if not isinstance(value, kind):
+            raise tornado.web.HTTPError(400, reason=f"'{key}' must be a {kind.__name__}")
+        return value
+
+    def upload_ids(self, body: dict) -> list:
+        ids = self.field(body, "uploads", list)
+        if not all(isinstance(i, str) for i in ids):
+            raise tornado.web.HTTPError(400, reason="'uploads' must be a list of upload ids")
+        return ids
+
+    def require_snapshot(self, sid: str) -> None:
+        if not SNAPSHOT_ID.fullmatch(sid) or not (self.library.root / sid).is_dir():
+            raise tornado.web.HTTPError(404, reason="no such snapshot")
 
     def require_unlocked(self):
         if self.library.state != "unlocked":
@@ -69,12 +108,12 @@ class TokenHandler(tornado.web.RequestHandler):
         host = (self.request.host or "").split(":")[0]
         if host not in ALLOWED_HOSTS_SUFFIX:
             self.set_status(403); return
-        if self.get_argument("token", None) == self.app_state["token"]:
+        if _token_ok(self.get_argument("token", None), self.app_state["token"]):
             self.set_cookie("bw_token", self.app_state["token"],
                             httponly=True, samesite="Strict", path="/")
             self.redirect("/")
             return
-        if self.get_cookie("bw_token") == self.app_state["token"]:
+        if _token_ok(self.get_cookie("bw_token"), self.app_state["token"]):
             self._serve_index()
             return
         self.set_status(403)
@@ -134,18 +173,19 @@ class SnapshotsHandler(_Base):
         if not self.require_unlocked():
             return
         body = self.json_body()
+        name, ids = self.field(body, "name", str), self.upload_ids(body)
         uploads = self.app_state["uploads"]
         try:
-            sources, names = _claim(uploads, body["uploads"], self.library)
+            sources, names = _claim(uploads, ids, self.library)
         except (KeyError, FileNotFoundError, vault.BadData):
-            _drop(uploads, body.get("uploads") or [])
+            _drop(uploads, ids)
             self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
-            snap = self.library.create(body["name"], sources, names)
+            snap = self.library.create(name, sources, names)
         except (BurpXmlError, ValueError) as e:
-            _drop(uploads, body["uploads"])
+            _drop(uploads, ids)
             self.set_status(422); self.finish({"error": str(e)}); return
-        _drop(uploads, body["uploads"])
+        _drop(uploads, ids)
         self.finish(vars(snap))
 
 
@@ -153,8 +193,10 @@ class SnapshotHandler(_Base):
     def patch(self, sid):
         if not self.require_unlocked():
             return
+        name = self.field(self.json_body(), "name", str)
+        self.require_snapshot(sid)
         try:
-            snap = self.library.rename(sid, self.json_body()["name"])
+            snap = self.library.rename(sid, name)
         except SnapshotDamaged:
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         self.finish(vars(snap))
@@ -172,22 +214,23 @@ class SnapshotFilesHandler(_Base):
     def post(self, sid):  # add files
         if not self.require_unlocked():
             return
-        body = self.json_body()
+        ids = self.upload_ids(self.json_body())
+        self.require_snapshot(sid)
         uploads = self.app_state["uploads"]
         try:
-            sources, names = _claim(uploads, body["uploads"], self.library)
+            sources, names = _claim(uploads, ids, self.library)
         except (KeyError, FileNotFoundError, vault.BadData):
-            _drop(uploads, body.get("uploads") or [])
+            _drop(uploads, ids)
             self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
             snap = self.library.add_files(sid, sources, names)
         except SnapshotDamaged:
-            _drop(uploads, body["uploads"])
+            _drop(uploads, ids)
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         except (BurpXmlError, ValueError) as e:
-            _drop(uploads, body["uploads"])
+            _drop(uploads, ids)
             self.set_status(422); self.finish({"error": str(e)}); return
-        _drop(uploads, body["uploads"])
+        _drop(uploads, ids)
         self.finish(vars(snap))
 
 
@@ -260,8 +303,16 @@ class ReplayHandler(_Base):
         if not self.require_unlocked():
             return
         body = self.json_body()
-        sid = body["snapshot_id"]
-        port = int(body.get("port") or 8081)
+        sid = self.field(body, "snapshot_id", str)
+        if not SNAPSHOT_ID.fullmatch(sid):
+            raise tornado.web.HTTPError(400, reason="'snapshot_id' is not a snapshot id")
+        try:
+            port = int(body.get("port") or 8081)
+        except (TypeError, ValueError):
+            raise tornado.web.HTTPError(400, reason="'port' must be a number") from None
+        if not 1 <= port <= 65535:
+            raise tornado.web.HTTPError(400, reason="'port' must be between 1 and 65535")
+        self.require_snapshot(sid)
         control_port = self.request.connection.stream.socket.getsockname()[1]
         if port == control_port:
             self.set_status(409)
@@ -307,7 +358,7 @@ class EventsSocket(tornado.websocket.WebSocketHandler):
 
     def prepare(self):
         host = (self.request.host or "").split(":")[0]
-        if host not in ALLOWED_HOSTS_SUFFIX or self.get_cookie("bw_token") != self.app_state["token"]:
+        if host not in ALLOWED_HOSTS_SUFFIX or not _token_ok(self.get_cookie("bw_token"), self.app_state["token"]):
             self.set_status(403)
             self.finish()
 
