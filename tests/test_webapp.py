@@ -235,3 +235,54 @@ class TestStatic(Base):
         assert page.code == 200 and b"<title>burpweb</title>" in page.body
         asset = self.fetch("/static/assets/app.js", headers={"Host": "127.0.0.1"})
         assert asset.code == 200 and asset.body == b"console.log(1)"
+
+
+class TestHardening(Base):
+    PASS = "correct horse battery"
+
+    def unlock(self):
+        assert self.api("POST", "/api/vault/create", {"passphrase": self.PASS}).code == 200
+
+    def test_cross_origin_writes_are_refused_before_they_act(self):
+        for origin in ("http://127.0.0.1:9999", "http://evil.example", "null"):
+            r = self.api("POST", "/api/vault/create", {"passphrase": self.PASS}, headers={"Origin": origin})
+            assert r.code == 403, origin
+        assert self.library.state == "new"  # none of them created the vault
+
+    def test_same_origin_and_originless_writes_still_work(self):
+        r = self.api("POST", "/api/vault/create", {"passphrase": self.PASS}, headers={"Origin": "http://127.0.0.1"})
+        assert r.code == 200
+        assert self.api("POST", "/api/vault/lock", headers={"Origin": "http://127.0.0.1"}).code == 200
+
+    def test_cross_origin_upload_is_refused(self):
+        self.unlock()
+        r = self.api("PUT", "/api/uploads/abc", None, headers={"Origin": "http://127.0.0.1:9999"})
+        assert r.code == 403
+
+    def test_a_non_ascii_token_is_a_403_not_a_crash(self):
+        r = self.fetch("/?token=%C3%A9", headers={"Host": "127.0.0.1"}, follow_redirects=False)
+        assert r.code == 403
+        r = self.fetch("/api/state", headers={"Cookie": "bw_token=é".encode("utf-8"), "Host": "127.0.0.1"})
+        assert r.code == 403
+
+    def test_malformed_json_is_a_400(self):
+        for body in (b"{not json", b"[1, 2]", b'"text"', b"\xff\xfe"):
+            r = self.fetch("/api/vault/unlock", method="POST", body=body, headers=self.cookie())
+            assert r.code == 400, body
+
+    def test_missing_or_mistyped_fields_are_a_400_not_a_500(self):
+        self.unlock()
+        assert self.api("POST", "/api/snapshots", {"uploads": []}).code == 400  # no name
+        assert self.api("POST", "/api/snapshots", {"name": "x"}).code == 400  # no uploads
+        assert self.api("POST", "/api/snapshots", {"name": "x", "uploads": "abc"}).code == 400
+        assert self.api("PATCH", "/api/snapshots/abc123", {}).code == 400
+        assert self.api("POST", "/api/replay", {}).code == 400
+        assert self.api("POST", "/api/replay", {"snapshot_id": "../etc"}).code == 400
+        assert self.api("POST", "/api/replay", {"snapshot_id": "abc123", "port": "http"}).code == 400
+        assert self.api("POST", "/api/replay", {"snapshot_id": "abc123", "port": 70000}).code == 400
+
+    def test_a_snapshot_that_does_not_exist_is_a_404(self):
+        self.unlock()
+        assert self.api("PATCH", "/api/snapshots/abc123", {"name": "x"}).code == 404
+        assert self.api("POST", "/api/snapshots/abc123/files", {"uploads": []}).code == 404
+        assert self.api("POST", "/api/replay", {"snapshot_id": "abc123"}).code == 404
