@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from urllib.parse import urlparse
@@ -92,6 +93,17 @@ class _Base(tornado.web.RequestHandler):
         if not SNAPSHOT_ID.fullmatch(sid) or not (self.library.root / sid).is_dir():
             raise tornado.web.HTTPError(404, reason="no such snapshot")
 
+    async def offload(self, fn, *args):
+        """Run slow library work (scrypt, parsing, encryption) off the event loop the replay proxy shares.
+
+        One worker keeps library operations serialized, as they were when they ran on the loop, so Lock
+        queues behind work already started. A lock that lands first surfaces as a 423, not a 500.
+        """
+        try:
+            return await asyncio.get_running_loop().run_in_executor(self.app_state["pool"], fn, *args)
+        except LibraryLocked:
+            raise tornado.web.HTTPError(423, reason="library locked") from None
+
     def require_unlocked(self):
         if self.library.state != "unlocked":
             self.set_status(423)
@@ -144,44 +156,45 @@ class VaultHandler(_Base):
             pw = body.get("passphrase", "")
             if len(pw) < 10:
                 self.set_status(400); self.finish({"error": "passphrase too short"}); return
-            self.library.create_vault(pw)
+            await self.offload(self.library.create_vault, pw)
             self.finish({"ok": True})
         elif action == "unlock":
-            if self.library.unlock(body.get("passphrase", "")):
+            if await self.offload(self.library.unlock, body.get("passphrase", "")):
                 self.finish({"ok": True})
             else:
                 self.set_status(401); self.finish({"error": "wrong passphrase"})
         elif action == "lock":
             await self.session.stop()
             _purge_uploads(self.app_state)
-            self.library.cleanup_temp()  # also staged uploads still being written
-            self.library.lock()
+            await self.offload(self.library.cleanup_temp)  # also staged uploads still being written
+            await self.offload(self.library.lock)
             self.finish({"ok": True})
         else:
             self.set_status(404); self.finish({"error": "unknown action"})
 
 
 class SnapshotsHandler(_Base):
-    def get(self):
+    async def get(self):
         if not self.require_unlocked():
             return
+        snapshots = await self.offload(self.library.list)
         # Tornado refuses to serialize a bare list (a legacy XSSI guard), so write the JSON ourselves.
         self.set_header("Content-Type", "application/json")
-        self.finish(json.dumps([vars(s) for s in self.library.list()]))
+        self.finish(json.dumps([vars(s) for s in snapshots]))
 
-    def post(self):
+    async def post(self):
         if not self.require_unlocked():
             return
         body = self.json_body()
         name, ids = self.field(body, "name", str), self.upload_ids(body)
         uploads = self.app_state["uploads"]
         try:
-            sources, names = _claim(uploads, ids, self.library)
+            sources, names = await self.offload(_claim, uploads, ids, self.library)
         except (KeyError, FileNotFoundError, vault.BadData):
             _drop(uploads, ids)
             self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
-            snap = self.library.create(name, sources, names)
+            snap = await self.offload(self.library.create, name, sources, names)
         except (BurpXmlError, ValueError) as e:
             _drop(uploads, ids)
             self.set_status(422); self.finish({"error": str(e)}); return
@@ -190,13 +203,13 @@ class SnapshotsHandler(_Base):
 
 
 class SnapshotHandler(_Base):
-    def patch(self, sid):
+    async def patch(self, sid):
         if not self.require_unlocked():
             return
         name = self.field(self.json_body(), "name", str)
         self.require_snapshot(sid)
         try:
-            snap = self.library.rename(sid, name)
+            snap = await self.offload(self.library.rename, sid, name)
         except SnapshotDamaged:
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         self.finish(vars(snap))
@@ -206,24 +219,24 @@ class SnapshotHandler(_Base):
             return
         if self.session.state["snapshot_id"] == sid:
             await self.session.stop()
-        self.library.delete(sid)
+        await self.offload(self.library.delete, sid)
         self.set_status(204); self.finish()
 
 
 class SnapshotFilesHandler(_Base):
-    def post(self, sid):  # add files
+    async def post(self, sid):  # add files
         if not self.require_unlocked():
             return
         ids = self.upload_ids(self.json_body())
         self.require_snapshot(sid)
         uploads = self.app_state["uploads"]
         try:
-            sources, names = _claim(uploads, ids, self.library)
+            sources, names = await self.offload(_claim, uploads, ids, self.library)
         except (KeyError, FileNotFoundError, vault.BadData):
             _drop(uploads, ids)
             self.set_status(400); self.finish({"error": "unknown or expired upload"}); return
         try:
-            snap = self.library.add_files(sid, sources, names)
+            snap = await self.offload(self.library.add_files, sid, sources, names)
         except SnapshotDamaged:
             _drop(uploads, ids)
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
@@ -319,7 +332,7 @@ class ReplayHandler(_Base):
             self.finish({"error": f"port {port} is the control page's own; choose another for the replay"})
             return
         try:
-            records = self.library.load_records(sid)
+            records = await self.offload(self.library.load_records, sid)
         except SnapshotDamaged:
             self.set_status(409); self.finish({"error": "snapshot damaged"}); return
         try:
@@ -408,7 +421,8 @@ def _purge_uploads(state):
 
 def make_app(library, session, token, *, static_dir=None):
     state = {"library": library, "session": session, "token": token,
-             "uploads": {}, "inflight": set(), "static_dir": static_dir}
+             "uploads": {}, "inflight": set(), "static_dir": static_dir,
+             "pool": ThreadPoolExecutor(max_workers=1, thread_name_prefix="burpweb-library")}
     kw = {"app_state": state}
     routes = [
         (r"/", TokenHandler, kw),
@@ -459,6 +473,7 @@ def run(host="127.0.0.1", port=8765, open_browser=True, static_dir=None):
             await asyncio.Event().wait()  # Tornado and the replay proxy share this one loop
         finally:
             await session.stop()
+            app.settings["bw_state"]["pool"].shutdown(wait=True, cancel_futures=True)  # let a running job finish
             _purge_uploads(app.settings["bw_state"])
             library.cleanup_temp()
             library.lock()

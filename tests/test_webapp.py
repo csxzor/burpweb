@@ -286,3 +286,53 @@ class TestHardening(Base):
         assert self.api("PATCH", "/api/snapshots/abc123", {"name": "x"}).code == 404
         assert self.api("POST", "/api/snapshots/abc123/files", {"uploads": []}).code == 404
         assert self.api("POST", "/api/replay", {"snapshot_id": "abc123"}).code == 404
+
+
+class TestOffload(Base):
+    """Slow library work (scrypt, snapshot create) must not freeze the loop the replay and feed share."""
+
+    PASS = "correct horse battery"
+
+    def setUp(self):
+        super().setUp()
+        self.library.create_vault(self.PASS)
+
+    async def _state_answers_while(self, method, path, body=None):
+        import asyncio
+        from tornado.httpclient import AsyncHTTPClient
+        client = AsyncHTTPClient()
+        slow = asyncio.ensure_future(client.fetch(
+            self.get_url(path), method=method, headers=self.cookie(),
+            body=json.dumps(body) if body is not None else None, raise_error=False))
+        await asyncio.sleep(0.15)
+        r = await client.fetch(self.get_url("/api/state"), headers=self.cookie())
+        assert r.code == 200
+        still_running = not slow.done()
+        return still_running, await slow
+
+    @tornado.testing.gen_test
+    async def test_a_slow_list_does_not_block_other_requests(self):
+        import time
+        self.library.list = lambda: time.sleep(0.8) or []
+        still_running, res = await self._state_answers_while("GET", "/api/snapshots")
+        assert still_running and res.code == 200
+
+    @tornado.testing.gen_test
+    async def test_a_slow_unlock_does_not_block_other_requests(self):
+        import time
+        self.library.lock()
+        self.library.unlock = lambda pw: time.sleep(0.8) or True
+        still_running, res = await self._state_answers_while("POST", "/api/vault/unlock", {"passphrase": self.PASS})
+        assert still_running and res.code == 200
+
+    @tornado.testing.gen_test
+    async def test_locking_during_slow_work_is_a_423_not_a_500(self):
+        import time
+        from burpweb.library import LibraryLocked
+
+        def slow_then_locked():
+            time.sleep(0.2)
+            raise LibraryLocked("library is locked")
+        self.library.list = slow_then_locked
+        _, res = await self._state_answers_while("GET", "/api/snapshots")
+        assert res.code == 423
