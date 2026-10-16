@@ -55,7 +55,7 @@ class Library:
         salt = os.urandom(16)
         key = vault.derive_key(passphrase, salt)
         check = vault.encrypt_bytes(key, _CHECK, snapshot_id="vault", label="check")
-        self._write(self.root / VAULT_FILE, json.dumps({
+        self._write_atomic(self.root / VAULT_FILE, json.dumps({  # a torn vault.json would lock the user out
             "version": 1, "kdf": "scrypt", "n": 2**17, "r": 8, "p": 1,
             "salt": salt.hex(), "check": check.hex(),
         }).encode())
@@ -152,7 +152,7 @@ class Library:
         os.chmod(tmp, 0o700)
         if existing:  # copy existing encrypted files unchanged
             for i in range(len(existing.files)):
-                shutil.copy2(self.root / sid / "files" / f"{i}.enc", tmp / "files" / f"{i}.enc")
+                self._copy_durable(self.root / sid / "files" / f"{i}.enc", tmp / "files" / f"{i}.enc")
         for offset, m in enumerate(materialized):
             self._write(tmp / "files" / f"{base_index + offset}.enc",
                         vault.encrypt_bytes(key, m, snapshot_id=sid, label=str(base_index + offset)))
@@ -176,12 +176,15 @@ class Library:
         meta = {"name": name, "created": created, "files": files, "stats": stats}
         self._write(tmp / "meta.enc",
                     vault.encrypt_bytes(key, json.dumps(meta).encode(), snapshot_id=sid, label="meta"))
+        self._fsync_dir(tmp / "files")
+        self._fsync_dir(tmp)
         dest = self.root / sid
         old = self.root / f".old-{sid}"
         shutil.rmtree(old, ignore_errors=True)
         if dest.exists():
             os.replace(dest, old)  # keep the previous version until the new one is in place
         os.replace(tmp, dest)
+        self._fsync_dir(self.root)  # the rename itself must survive a crash before the old copy is removed
         shutil.rmtree(old, ignore_errors=True)
         return Snapshot(id=sid, name=name, created=created, files=files, stats=stats)
 
@@ -227,10 +230,34 @@ class Library:
     # ---- disk helpers ----
     @staticmethod
     def _write(path: Path, data: bytes):
-        path.write_bytes(data)
-        os.chmod(path, 0o600)
+        """Create the file private from the start and force it to disk before returning."""
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(path, 0o600)  # a file that already existed keeps its old mode otherwise
+
+    @staticmethod
+    def _fsync_dir(path: Path):
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    @classmethod
+    def _copy_durable(cls, src: Path, dst: Path):
+        shutil.copyfile(src, dst)
+        os.chmod(dst, 0o600)
+        fd = os.open(dst, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def _write_atomic(self, path: Path, data: bytes):
         tmp = path.with_suffix(path.suffix + ".tmp")
         self._write(tmp, data)
         os.replace(tmp, path)
+        self._fsync_dir(path.parent)
