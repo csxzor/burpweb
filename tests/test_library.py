@@ -151,3 +151,55 @@ def test_stats_include_origin_table(lib):
     assert snap.stats["by_origin"] == expected
     assert lib.list()[0].stats["by_origin"] == expected
     assert snap.stats["origins"] == 2  # the existing count is untouched
+
+
+def _record_fsyncs(monkeypatch):
+    seen = {"files": 0, "dirs": 0}
+    real = os.fsync
+
+    def spy(fd):
+        seen["dirs" if stat.S_ISDIR(os.fstat(fd).st_mode) else "files"] += 1
+        real(fd)
+    monkeypatch.setattr(os, "fsync", spy)
+    return seen
+
+
+def test_a_crash_while_writing_vault_json_leaves_no_half_written_vault(tmp_path, monkeypatch):
+    lib = Library(tmp_path / "lib")
+    real = Library._write
+
+    def torn(path, data):  # the process dies after half the bytes reached the disk
+        real(path, data[: len(data) // 2])
+        raise OSError("crash")
+    monkeypatch.setattr(Library, "_write", staticmethod(torn))
+    with pytest.raises(OSError):
+        lib.create_vault("passphrase-123")
+    assert lib.state == "new"  # a torn vault.json would be "locked" forever and unopenable
+    monkeypatch.undo()
+    lib.create_vault("passphrase-123")  # and a retry works
+    assert lib.state == "unlocked"
+
+
+def test_vault_creation_syncs_the_file_and_its_directory(tmp_path, monkeypatch):
+    seen = _record_fsyncs(monkeypatch)
+    Library(tmp_path / "lib").create_vault("passphrase-123")
+    assert seen["files"] >= 1 and seen["dirs"] >= 1
+
+
+def test_snapshot_creation_syncs_files_and_directories(lib, monkeypatch):
+    seen = _record_fsyncs(monkeypatch)
+    lib.create("s", [XML], ["a.xml"])
+    assert seen["files"] >= 2 and seen["dirs"] >= 2  # data + meta; the new snapshot dir and the library dir
+
+
+def test_new_files_are_never_world_readable_even_briefly(lib, monkeypatch):
+    modes = []
+    real_open = os.open
+
+    def spy(path, flags, mode=0o777, **kw):
+        if flags & os.O_CREAT:
+            modes.append(mode)
+        return real_open(path, flags, mode, **kw)
+    monkeypatch.setattr(os, "open", spy)
+    lib.create("s", [XML], ["a.xml"])
+    assert modes and all(m == 0o600 for m in modes)

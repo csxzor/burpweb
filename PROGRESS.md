@@ -90,11 +90,12 @@ malformed); `_decodes` fully decompresses to validate (gzip-bomb memory risk) an
 the profile fails silently; port-in-use message order/`--mode` hint; 204/304 get `Content-Length: 0`; odd header
 names pass through.
 
-Backend (still open): memory peaks at ~3x plaintext when loading; no `fsync` before renames and `vault.json` is written
-non-atomically; unbounded WS write buffer for a stalled client.
+Backend (still open): memory peaks at ~3x plaintext when loading (~0.5 GB for the 164 MB export); unbounded WS write
+buffer for a stalled client (local-only, low risk).
 Backend (fixed 2026-10-16): cross-origin writes refused via Origin check; token compared with `hmac.compare_digest`; bad JSON /
 fields / `snapshot_id` give 400, missing snapshot gives 404; scrypt, create/add/list/rename and load_records run on a single
-worker thread (`offload` in `webapp.py`) so the replay and feed no longer freeze.
+worker thread (`offload` in `webapp.py`) so the replay and feed no longer freeze; library writes are fsynced, created 0600,
+`vault.json` is written atomically; `tornado` and `cryptography` are declared dependencies (wheel verified in a clean venv).
 
 ## Gotchas learned (save time)
 
