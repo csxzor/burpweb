@@ -90,11 +90,11 @@ malformed); `_decodes` fully decompresses to validate (gzip-bomb memory risk) an
 the profile fails silently; port-in-use message order/`--mode` hint; 204/304 get `Content-Length: 0`; odd header
 names pass through.
 
-Backend: scrypt/create/add_files/load_records block the shared event loop (replay + feed freeze 1-5 s); memory
-peaks at ~3x plaintext when loading; CSRF from another `127.0.0.1` port (SameSite ignores ports; require
-`application/json` or check `Origin`); token compared with `==` not `hmac.compare_digest`; unvalidated
-`snapshot_id` / malformed JSON give 500 not 400; missing snapshot gives 409 "damaged" not 404; no `fsync`
-before renames and `vault.json` is written non-atomically; unbounded WS write buffer for a stalled client.
+Backend (still open): memory peaks at ~3x plaintext when loading; no `fsync` before renames and `vault.json` is written
+non-atomically; unbounded WS write buffer for a stalled client.
+Backend (fixed 2026-10-16): cross-origin writes refused via Origin check; token compared with `hmac.compare_digest`; bad JSON /
+fields / `snapshot_id` give 400, missing snapshot gives 404; scrypt, create/add/list/rename and load_records run on a single
+worker thread (`offload` in `webapp.py`) so the replay and feed no longer freeze.
 
 ## Gotchas learned (save time)
 
